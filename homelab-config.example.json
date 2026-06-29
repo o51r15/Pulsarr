@@ -1,0 +1,19 @@
+{
+  "tp": {
+    "url": "http://192.168.1.x:8080",
+    "user": "admin",
+    "pass": "<encrypted-with-ConvertFrom-SecureString>",
+    "dockerNet": "your_vpn_network",
+    "dir": "C:\\path\\to\\trackarr",
+    "script": "C:\\path\\to\\trackarr\\trackerping.ps1",
+    "trackerHistoryRuns": 200,
+    "trackerLatencyTimeoutMs": 3000
+  },
+  "notifications": {
+    "pushoverUser": "",
+    "pushoverToken": "",
+    "notify": {
+      "tp": false
+    }
+  }
+}
