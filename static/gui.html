@@ -370,8 +370,15 @@
             const res = await fetch(`${BRIDGE}/api/network-mode`, { cache: 'no-store' });
             netInfo = await res.json();
             const pill = document.getElementById('netPill');
-            if (netInfo.vpn_detected) { pill.className = 'net-pill vpn'; pill.textContent = 'VPN'; }
-            else { pill.className = 'net-pill open'; pill.textContent = netInfo.mode === 'proxy' ? 'Proxy' : 'Direct'; }
+            if (netInfo.vpn_detected) {
+                pill.className = 'net-pill vpn';
+                pill.textContent = 'VPN';
+                pill.title = `VPN tunnel interface detected: ${netInfo.vpn_interface || 'unknown'}`;
+            } else {
+                pill.className = 'net-pill open';
+                pill.textContent = netInfo.mode === 'proxy' ? 'Proxy' : 'Direct';
+                pill.title = 'No VPN tunnel interface detected';
+            }
         } catch {}
     }
 
