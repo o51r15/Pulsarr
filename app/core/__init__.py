@@ -1,9 +1,12 @@
-# Core pipeline modules — implemented in Phase 2+
-# collect.py   — source collection
-# ping.py      — async ping engine
-# latency.py   — TCP latency measurement
+# Core pipeline modules
+# collect.py   — source collection (raw URL lists, GitHub repos, scrapes, manual)
+# ping.py      — async ping engine (UDP, HTTP/HTTPS, WS)
+# latency.py   — TCP connect latency measurement
 # inject.py    — qBittorrent API client
-# sleep.py     — sleep/hibernate state
+# sleep.py     — sleep/hibernate state with progressive backoff
 # history.py   — 7-day tracker run history
+# run.py       — full pipeline orchestration (collect -> ping -> latency -> sleep -> inject)
+#
+# Phase 5+:
 # discovery.py — source discovery engine
 # notify.py    — Pushover + webhook notifications

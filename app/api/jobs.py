@@ -2,26 +2,27 @@
 jobs.py — Async job manager
 
 Manages the lifecycle of TrackerPing and Discovery runs.
-Each run is an asyncio Task with a unique 8-char ID.
+Each run is an asyncio Task with a unique 8-char ID, streamed live via SSE.
 
 Job states: pending → running → done | failed | aborted
-
-Phase 1: data structures and stub endpoints only.
-Phase 3: full run implementation with SSE streaming.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncGenerator
 
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 
+from ..core.run import run_trackerping
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -36,12 +37,14 @@ class JobStatus(str, Enum):
 @dataclass
 class Job:
     id:         str
-    type:       str                        # "trackerping" | "discovery"
+    type:       str
     status:     JobStatus = JobStatus.PENDING
     started_at: float     = field(default_factory=time.time)
     ended_at:   float | None = None
     log_lines:  list[dict]   = field(default_factory=list)
+    summary:    dict | None  = None
     task:       asyncio.Task | None = field(default=None, repr=False)
+    _new_line_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def to_dict(self) -> dict:
         return {
@@ -50,15 +53,15 @@ class Job:
             "status":     self.status,
             "started_at": self.started_at,
             "ended_at":   self.ended_at,
+            "summary":    self.summary,
         }
 
 
-# In-memory store — jobs are short-lived and don't need persistence
 _jobs: dict[str, Job] = {}
 
 
 def new_job_id() -> str:
-    return secrets.token_hex(4)   # 8 hex chars
+    return secrets.token_hex(4)
 
 
 def get_job(job_id: str) -> Job | None:
@@ -72,7 +75,6 @@ def create_job(job_type: str) -> Job:
 
 
 def prune_jobs(max_age_seconds: int = 1800) -> None:
-    """Remove completed jobs older than max_age_seconds."""
     cutoff = time.time() - max_age_seconds
     stale = [
         jid for jid, j in _jobs.items()
@@ -83,19 +85,67 @@ def prune_jobs(max_age_seconds: int = 1800) -> None:
         del _jobs[jid]
 
 
+async def _log_to_job(job: Job, message: str, level: str = "info") -> None:
+    entry = {"ts": time.time(), "level": level, "msg": message}
+    job.log_lines.append(entry)
+    job._new_line_event.set()
+
+
+async def _execute_trackerping(job: Job, app_state) -> None:
+    job.status = JobStatus.RUNNING
+
+    async def log(message: str, level: str = "info") -> None:
+        await _log_to_job(job, message, level)
+        logger.info("[job %s] %s", job.id, message)
+
+    try:
+        network_info = app_state.network_info
+        config = app_state.config
+        env = app_state.settings
+
+        connection_mode = network_info["mode"] if network_info["vpn_detected"] else config.connection_mode
+
+        summary = await run_trackerping(config, env, connection_mode, log)
+        job.summary = {
+            "fetched": summary.fetched,
+            "active":  summary.active,
+            "passed":  summary.passed,
+            "success": summary.success,
+            "error":   summary.error,
+        }
+        job.status = JobStatus.DONE if summary.success else JobStatus.FAILED
+    except asyncio.CancelledError:
+        job.status = JobStatus.ABORTED
+        await log("Run aborted by user.", "warn")
+        raise
+    except Exception as exc:
+        logger.exception("Job %s crashed", job.id)
+        await log(f"Unexpected error: {exc}", "error")
+        job.status = JobStatus.FAILED
+        job.summary = {"success": False, "error": str(exc)}
+    finally:
+        job.ended_at = time.time()
+        job._new_line_event.set()
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.post("/run/trackerping")
+async def start_trackerping(request: Request):
+    prune_jobs()
+    job = create_job("trackerping")
+    job.task = asyncio.create_task(_execute_trackerping(job, request.app.state))
+    return {"ok": True, "job_id": job.id}
+
 
 @router.get("/{job_id}")
 async def get_job_status(job_id: str):
     job = get_job(job_id)
     if not job:
-        return {"error": "job not found"}, 404
-    return {
-        **job.to_dict(),
-        "log_lines": job.log_lines,
-    }
+        return JSONResponse({"error": "job not found"}, status_code=404)
+    return {**job.to_dict(), "log_lines": job.log_lines}
 
 
 @router.post("/{job_id}/abort")
@@ -105,18 +155,11 @@ async def abort_job(job_id: str):
         return {"ok": False, "error": "job not found"}
     if job.task and not job.task.done():
         job.task.cancel()
-        job.status = JobStatus.ABORTED
-        job.ended_at = time.time()
     return {"ok": True}
 
 
 @router.get("/{job_id}/stream")
 async def stream_job(job_id: str):
-    """
-    SSE stream for a job's log output.
-    Phase 3 will yield real log lines as they're produced.
-    Phase 1 stub: returns job status and closes.
-    """
     job = get_job(job_id)
     if not job:
         async def _not_found() -> AsyncGenerator[str, None]:
@@ -124,12 +167,25 @@ async def stream_job(job_id: str):
         return StreamingResponse(_not_found(), media_type="text/event-stream")
 
     async def _stream() -> AsyncGenerator[str, None]:
-        # Phase 1: yield existing lines then close
-        for line in job.log_lines:
-            yield f"data: {line}\n\n"
-            await asyncio.sleep(0)
-        if job.status not in (JobStatus.RUNNING, JobStatus.PENDING):
-            yield f"event: done\ndata: {job.status}\n\n"
+        import json as _json
+
+        sent = 0
+        while True:
+            job._new_line_event.clear()
+
+            # Flush any lines not yet sent to this client
+            while sent < len(job.log_lines):
+                yield f"data: {_json.dumps(job.log_lines[sent])}\n\n"
+                sent += 1
+
+            if job.status not in (JobStatus.RUNNING, JobStatus.PENDING):
+                yield f"event: done\ndata: {_json.dumps(job.to_dict())}\n\n"
+                break
+
+            try:
+                await asyncio.wait_for(job._new_line_event.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
 
     return StreamingResponse(
         _stream(),

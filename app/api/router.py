@@ -13,6 +13,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from ..config import AppConfig, load_app_config, save_app_config, env
+from ..core import history as history_module
+from ..core import sleep as sleep_module
 from . import jobs as job_router
 
 logger = logging.getLogger(__name__)
@@ -88,4 +90,41 @@ async def post_config(request: Request):
 
     save_app_config(config)
     request.app.state.config = config
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Tracker history
+# ---------------------------------------------------------------------------
+
+@router.get("/tracker-history", tags=["trackers"])
+async def get_tracker_history():
+    return history_module.load_history()
+
+
+# ---------------------------------------------------------------------------
+# Sleep / hibernate state
+# ---------------------------------------------------------------------------
+
+@router.get("/tracker-sleep", tags=["trackers"])
+async def get_tracker_sleep():
+    state = sleep_module.load_sleep_state()
+    return {url: entry.__dict__ for url, entry in state.items()}
+
+
+@router.post("/tracker-sleep/wake", tags=["trackers"])
+async def wake_tracker(request: Request):
+    body = await request.json()
+    url = body.get("url")
+    if not url:
+        return JSONResponse({"ok": False, "error": "url required"}, status_code=422)
+    state = sleep_module.load_sleep_state()
+    state.pop(url, None)
+    sleep_module.save_sleep_state(state)
+    return {"ok": True}
+
+
+@router.post("/tracker-sleep/wake-all", tags=["trackers"])
+async def wake_all_trackers():
+    sleep_module.save_sleep_state({})
     return {"ok": True}
