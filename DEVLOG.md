@@ -422,25 +422,40 @@ No VPN network. Proxy/direct options shown in GUI.
 
 ## Build phases
 
-### Phase 1 — Foundation
+### Phase 1 — Foundation ✅ DONE
 - Project skeleton, FastAPI app
 - Config loading (Pydantic + env vars)
 - VPN detection at startup
 - Static file serving (GUI placeholder)
 - `GET /api/network-mode`, `GET /api/ping`
 
-### Phase 2 — Core pipeline
-- Source collection (`collect.py`)
-- Ping engine (`ping.py`, `latency.py`)
-- Sleep/hibernate state (`sleep.py`)
-- qBittorrent client (`inject.py`)
-- Full run: collect → ping → latency → sleep update → inject → verify
+### Phase 2 — Core pipeline ✅ DONE
+- Source collection (`collect.py`) — raw URL lists, GitHub repo crawl with SHA cache, website scrape, manual entries
+- Ping engine (`ping.py`) — UDP BitTorrent protocol, HTTP/HTTPS announce, WS mapped to HTTP
+- Latency measurement (`latency.py`) — asyncio.open_connection TCP timing
+- Sleep/hibernate state (`sleep.py`) — progressive backoff ported exactly from PS version
+- qBittorrent client (`inject.py`) — login, setPreferences, verify
+- 7-day history (`history.py`) — time-based pruning, stale key removal
+- Full orchestration (`run.py`) — collect → sleep filter → ping → latency → sleep update → inject → verify
+- Job system wired to real pipeline (`jobs.py`) — SSE streaming with index-tracking (race-condition-free), async task execution, abort support
 
-### Phase 3 — API and streaming
-- Job manager (`jobs.py`)
-- SSE log streaming
-- All REST endpoints (config, tracker URLs, sources, sleep, history)
-- Tracker history with 7-day pruning
+**Verified end-to-end against live infrastructure:** booted the app locally, hit `/api/jobs/run/trackerping`
+with real (placeholder qBT URL) credentials, and confirmed: 93 real trackers collected from the live
+ngosang trackerslist URL, 84 passed real UDP/HTTP pings, latency measured for all 84, sleep state
+correctly written for the 9 that failed, and the pipeline only failed at the final qBittorrent connection
+step — exactly as expected since no real qBittorrent instance was present in the test environment.
+This confirms collect → ping → latency → sleep all function correctly against real-world data.
+
+**Known limitation found during Phase 2 build:** `aiohttp` has no native SOCKS5 support. The current
+`ping.py` proxy path (`_ping_one_with_proxy`) only applies the `proxy=` kwarg when the URL is an HTTP
+proxy (`proxy.startswith("http")`). SOCKS5 proxy mode is accepted in config but pings will silently NOT
+be routed through it until the `aiohttp-socks` dependency is added. This needs to be fixed before Phase 3
+claims SOCKS5 support is functional — track as an open issue.
+
+### Phase 3 — API and streaming (next)
+- Tracker URL / source management endpoints (`tracker-urls`, `tracker-sources` CRUD)
+- Remaining REST endpoints not yet covered (tracker-sources approve/dismiss)
+- Confirm SSE streaming works correctly from a real browser EventSource (only tested via job status polling so far)
 
 ### Phase 4 — Scheduler
 - Internal async scheduler (`scheduler.py`)
@@ -456,13 +471,13 @@ No VPN network. Proxy/direct options shown in GUI.
 - Webhook
 
 ### Phase 7 — GUI updates
-- Connection mode status panel in Config tab (VPN detected vs open)
-- Replace polling job log with SSE
-- Remove Docker-specific config fields (network name, script path, ping image)
-- Update Scheduler tab if needed
+- Connection mode status panel in Config tab (VPN detected vs open) — already partially done in Phase 1 placeholder GUI
+- Replace placeholder GUI with full 5-tab interface
+- SSE log stream in Execution tab
+- Remove Docker-specific config fields (network name, script path, ping image) — N/A, never existed in Python rewrite
 
 ### Phase 8 — Packaging and CI
-- Final Dockerfile
+- Final Dockerfile (mostly done — needs `aiohttp-socks` added if SOCKS5 is fixed)
 - docker-compose examples
 - Update CI workflow (image is now Python-only, ~200MB lighter)
 - Update README for container-only install
