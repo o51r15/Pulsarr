@@ -89,7 +89,14 @@ async def run_inject_pipeline(
     qbt_url: str, qbt_user: str, qbt_pass: str, trackers: list[str], log
 ) -> None:
     """Full login -> inject -> verify pipeline. Raises on failure."""
-    async with aiohttp.ClientSession() as session:
+    # unsafe=True is required because aiohttp's default cookie jar follows RFC 6265
+    # and silently refuses to store cookies for bare IP-address hosts (no public
+    # suffix / domain). qBittorrent is very commonly reached via a raw LAN IP
+    # (e.g. http://192.168.1.x:port), so without this, login() appears to succeed
+    # (200, no "Fails" body) but the SID cookie is dropped before the next request
+    # goes out, and every subsequent call gets HTTP 403 as if unauthenticated.
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
         await log(f"Logging into qBittorrent at {qbt_url}...", "info")
         await login(session, qbt_url, qbt_user, qbt_pass)
         await log("Authenticated.", "ok")
