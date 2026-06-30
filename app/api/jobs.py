@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from ..core import discovery as discovery_module
+from ..core import notify as notify_module
 from ..core.run import run_trackerping
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,9 @@ async def _execute_trackerping(job: Job, app_state) -> None:
             "error":   summary.error,
         }
         job.status = JobStatus.DONE if summary.success else JobStatus.FAILED
+        await notify_module.notify_run_complete(
+            config, env, summary.success, summary.fetched, summary.active, summary.passed, summary.error
+        )
     except asyncio.CancelledError:
         job.status = JobStatus.ABORTED
         await log("Run aborted by user.", "warn")
@@ -124,6 +128,10 @@ async def _execute_trackerping(job: Job, app_state) -> None:
         await log(f"Unexpected error: {exc}", "error")
         job.status = JobStatus.FAILED
         job.summary = {"success": False, "error": str(exc)}
+        try:
+            await notify_module.notify_run_complete(app_state.config, app_state.settings, False, error=str(exc))
+        except Exception:
+            pass
     finally:
         job.ended_at = time.time()
         job._new_line_event.set()
@@ -171,6 +179,9 @@ async def _execute_discovery(job: Job, app_state) -> None:
             "candidates": len(sources.discovery.candidates),
         }
         job.status = JobStatus.DONE
+        await notify_module.notify_discovery_complete(
+            config, env, len(sources.discovery.candidates), True, None
+        )
     except asyncio.CancelledError:
         job.status = JobStatus.ABORTED
         await log("Discovery aborted by user.", "warn")
@@ -180,6 +191,12 @@ async def _execute_discovery(job: Job, app_state) -> None:
         await log(f"Unexpected error: {exc}", "error")
         job.status = JobStatus.FAILED
         job.summary = {"success": False, "error": str(exc)}
+        try:
+            await notify_module.notify_discovery_complete(
+                app_state.config, app_state.settings, 0, False, str(exc)
+            )
+        except Exception:
+            pass
     finally:
         job.ended_at = time.time()
         job._new_line_event.set()
