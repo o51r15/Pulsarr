@@ -452,12 +452,25 @@ proxy (`proxy.startswith("http")`). SOCKS5 proxy mode is accepted in config but 
 be routed through it until the `aiohttp-socks` dependency is added. This needs to be fixed before Phase 3
 claims SOCKS5 support is functional — track as an open issue.
 
-### Phase 3 — API and streaming (next)
-- Tracker URL / source management endpoints (`tracker-urls`, `tracker-sources` CRUD)
-- Remaining REST endpoints not yet covered (tracker-sources approve/dismiss)
-- Confirm SSE streaming works correctly from a real browser EventSource (only tested via job status polling so far)
+### Phase 3 — API and streaming ✅ DONE
+- Tracker source CRUD (`sources.py` + router endpoints) — GitHub repos, website scrapes, manual entries
+- Fixed a real bug found during this phase: `run.py` had its own ad-hoc `load_sources()` reading camelCase
+  keys (`githubRepos`) while the new `sources.py` module wrote snake_case keys (`github_repos`) to the same
+  file — they would have silently never seen each other's data. Refactored `run.py` to use `sources.py` directly.
+- All tracker-history, tracker-sleep (wake/wake-all), tracker-sources (add/remove/list) endpoints live
 
-### Phase 4 — Scheduler
+**Verified end-to-end:** added a real GitHub repo source (`ngosang/trackerslist`) via
+`POST /api/tracker-sources/github-repos`, confirmed it persisted via `GET /api/tracker-sources`, then
+triggered a real run and confirmed the repo was actually crawled by the pipeline — 500 unique trackers
+collected (93 from the raw list + 407 new from the GitHub repo crawl).
+
+**SSE streaming verified live, not just via polling:** connected to `/api/jobs/{id}/stream` mid-run using
+`curl -N` (true streaming, unbuffered) and confirmed every log line arrived in real time as proper
+`data: {...}` SSE frames, terminating correctly with `event: done` carrying the full job summary. The
+index-tracking approach in `jobs.py` (fixed during Phase 2 review for a duplicate-message race) holds up
+under a real concurrent client connection.
+
+### Phase 4 — Scheduler (next)
 - Internal async scheduler (`scheduler.py`)
 - Schedule CRUD endpoints
 - GUI Scheduler tab
