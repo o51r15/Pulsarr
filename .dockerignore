@@ -1,0 +1,12 @@
+.git
+.github
+*.log
+*.log.err
+homelab-config.json
+tracker-data/
+combined_raw.txt
+active_raw.txt
+working_trackers.txt
+*.tmp
+Thumbs.db
+desktop.ini

@@ -1,0 +1,20 @@
+name: Sync to Gitea
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push mirror to Gitea
+        run: |
+          git remote add gitea https://${{ secrets.GITEA_USER }}:${{ secrets.GITEA_TOKEN }}@${{ secrets.GITEA_URL }}/${{ secrets.GITEA_USER }}/trackarr.git
+          git push --mirror gitea
