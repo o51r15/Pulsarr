@@ -225,8 +225,33 @@
                     <div class="field"><label>Password</label><div class="pw-wrap"><input type="password" id="tp-cfgPass"><button class="pw-toggle" onclick="togglePw('tp-cfgPass')">&#128065;</button></div></div>
                     <div class="field"><label>History Runs (per tracker)</label><input type="number" id="tp-cfgHistoryRuns" min="10" max="1000" value="200"></div>
                     <div class="field"><label>Latency Timeout (ms)</label><input type="number" id="tp-cfgLatencyTimeout" min="500" max="10000" value="3000"></div>
-                    <div class="field span2"><label>Docker Network</label><input type="text" id="tp-cfgDockerNet" placeholder="your_vpn_network"></div>
                     <div class="field span2"><details><summary style="cursor:pointer;font-size:11px;color:var(--muted);user-select:none;list-style:none;display:flex;align-items:center;gap:6px"><span>&#x25B8; Advanced Paths</span></summary><div class="form-grid" style="margin-top:12px"><div class="field span2"><label>Config Directory</label><input type="text" id="tp-cfgDir"></div><div class="field span2"><label>Script Path</label><input type="text" id="tp-cfgScript"></div></div></details></div>
+                </div>
+            </div>
+        </div>
+        <div class="panel" style="margin-top:4px">
+            <div class="panel-header"><div class="panel-title">Ping Mode</div></div>
+            <div class="panel-body">
+                <div class="field span2" style="margin-bottom:16px">
+                    <label>How trackers are pinged</label>
+                    <select id="tp-cfgPingMode" onchange="onPingModeChange()">
+                        <option value="docker-vpn">Docker VPN network (Gluetun / VPN container)</option>
+                        <option value="socks5">SOCKS5 proxy</option>
+                        <option value="https-proxy">HTTPS proxy (HTTP CONNECT)</option>
+                        <option value="direct">Direct (no VPN or proxy)</option>
+                    </select>
+                </div>
+                <div id="ping-dockerNet-row" class="field span2">
+                    <label>Docker VPN Network</label>
+                    <input type="text" id="tp-cfgDockerNet" placeholder="your_vpn_network">
+                    <span style="font-size:11px;color:var(--muted);margin-top:4px">The Docker network attached to your VPN container (e.g. Gluetun). The ping container joins this network so traffic exits through the VPN.</span>
+                </div>
+                <div id="ping-proxy-row" class="field span2" style="display:none">
+                    <label>Proxy URL</label>
+                    <input type="text" id="tp-cfgProxyUrl" placeholder="socks5://127.0.0.1:1080">
+                </div>
+                <div id="ping-udp-warn" style="display:none;margin-top:12px;padding:12px 16px;background:rgba(255,202,40,.08);border:1px solid rgba(255,202,40,.25);border-radius:6px;font-size:12px;color:var(--warn);line-height:1.7">
+                    <strong>UDP trackers will be skipped.</strong> SOCKS5 and HTTP proxies cannot tunnel UDP traffic (UDP ASSOCIATE is not supported by most proxy implementations). Only <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px;font-family:var(--mono)">http://</code>, <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px;font-family:var(--mono)">https://</code>, and <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px;font-family:var(--mono)">ws://</code> trackers will be tested.
                 </div>
             </div>
         </div>
@@ -516,6 +541,16 @@
         } catch (e) {}
     }
 
+    function onPingModeChange() {
+        const mode = document.getElementById('tp-cfgPingMode').value;
+        const proxyModes = ['socks5', 'https-proxy'];
+        document.getElementById('ping-dockerNet-row').style.display = mode === 'docker-vpn' ? '' : 'none';
+        document.getElementById('ping-proxy-row').style.display    = proxyModes.includes(mode) ? '' : 'none';
+        document.getElementById('ping-udp-warn').style.display     = proxyModes.includes(mode) ? '' : 'none';
+        const proxyEl = document.getElementById('tp-cfgProxyUrl');
+        if (proxyEl) proxyEl.placeholder = mode === 'socks5' ? 'socks5://127.0.0.1:1080' : 'http://127.0.0.1:3128';
+    }
+
     // =========================================================================
     // CONFIG
     // =========================================================================
@@ -533,6 +568,10 @@
                     document.getElementById('tp-cfgDockerNet').value      = j.config.tp.dockerNet || '';
                     document.getElementById('tp-cfgHistoryRuns').value    = j.config.tp.trackerHistoryRuns || 200;
                     document.getElementById('tp-cfgLatencyTimeout').value = j.config.tp.trackerLatencyTimeoutMs || 3000;
+                    const pm = document.getElementById('tp-cfgPingMode');
+                    if (pm) { pm.value = j.config.tp.pingMode || 'docker-vpn'; onPingModeChange(); }
+                    const pu = document.getElementById('tp-cfgProxyUrl');
+                    if (pu) pu.value = j.config.tp.proxyUrl || '';
                 }
                 if (j.config.notifications) {
                     const n = j.config.notifications;
@@ -550,6 +589,8 @@
                 dir:                   document.getElementById('tp-cfgDir').value.trim(),
                 script:                document.getElementById('tp-cfgScript').value.trim(),
                 dockerNet:             document.getElementById('tp-cfgDockerNet').value.trim(),
+                pingMode:              document.getElementById('tp-cfgPingMode')?.value || 'docker-vpn',
+                proxyUrl:              document.getElementById('tp-cfgProxyUrl')?.value.trim() || '',
                 url:                   document.getElementById('tp-cfgUrl').value.trim(),
                 user:                  document.getElementById('tp-cfgUser').value.trim(),
                 pass:                  document.getElementById('tp-cfgPass').value,

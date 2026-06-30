@@ -105,6 +105,9 @@ $ActiveFile     = Join-Path $ConfigDir "active_raw.txt"
 $SleepFile      = Join-Path $TrackerDataDir "tracker-sleep.json"
 if (-not (Test-Path $TrackerDataDir)) { New-Item -ItemType Directory -Path $TrackerDataDir | Out-Null }
 
+$PingMode = if ($Cfg.pingMode -and $Cfg.pingMode -ne '') { $Cfg.pingMode } else { 'docker-vpn' }
+$ProxyUrl = if ($Cfg.proxyUrl) { $Cfg.proxyUrl } else { '' }
+
 $TrackerSources = $null
 if (Test-Path $SourcesFile) { try { $TrackerSources = Get-Content $SourcesFile -Raw | ConvertFrom-Json } catch { Write-Log "Could not read tracker-sources.json: $_" "WARN" } }
 $GithubToken = ""
@@ -113,15 +116,19 @@ if ($TrackerSources -and ![string]::IsNullOrWhiteSpace($TrackerSources.githubTok
 }
 
 # =============================================================================
-# Security check
+# Security check (docker-vpn mode only)
 # =============================================================================
-Write-Log "Verifying connection security..."
-try { $hostIp = (Invoke-RestMethod "https://api.ipify.org" -UseBasicParsing -TimeoutSec 10).Trim() } catch { Exit-Failure "Could not determine Host IP." }
-$containerIpRaw = & docker run --rm --network=$docker_net alpine wget --timeout=10 -qO- https://api.ipify.org 2>$null
-$containerIp    = if ($containerIpRaw) { "$containerIpRaw".Trim() } else { "" }
-if ([string]::IsNullOrWhiteSpace($containerIp)) { Exit-Failure "Could not determine container IP. Is the routing container ($docker_net) running?" }
-elseif ($hostIp -eq $containerIp) { Write-Log "CRITICAL: Container IP matches Host IP! UNSECURE." "ERROR"; Exit-Failure "Aborting." }
-else { Write-Log "Connection SECURE. Container: $containerIp (Hidden Host: $hostIp)" "INFO" }
+if ($PingMode -eq 'docker-vpn') {
+    Write-Log "Verifying connection security (ping mode: docker-vpn)..."
+    try { $hostIp = (Invoke-RestMethod "https://api.ipify.org" -UseBasicParsing -TimeoutSec 10).Trim() } catch { Exit-Failure "Could not determine Host IP." }
+    $containerIpRaw = & docker run --rm --network=$docker_net alpine wget --timeout=10 -qO- https://api.ipify.org 2>$null
+    $containerIp    = if ($containerIpRaw) { "$containerIpRaw".Trim() } else { "" }
+    if ([string]::IsNullOrWhiteSpace($containerIp)) { Exit-Failure "Could not determine container IP. Is '$docker_net' running?" }
+    elseif ($hostIp -eq $containerIp) { Write-Log "CRITICAL: Container IP matches Host IP! Traffic is NOT routed through VPN." "ERROR"; Exit-Failure "Aborting - VPN routing not confirmed." }
+    else { Write-Log "Connection SECURE. Container: $containerIp (Hidden Host: $hostIp)" "INFO" }
+} else {
+    Write-Log "Ping mode: $PingMode. VPN security check skipped."
+}
 
 # =============================================================================
 # 1. Collect trackers
@@ -225,14 +232,55 @@ if ($ActiveTrackers.Count -eq 0) {
 Write-Log "Wrote $($ActiveTrackers.Count) active trackers to active_raw.txt"
 
 # =============================================================================
-# 2. Ping via Docker
+# 2. Ping via local-trackerping (built from ping/Dockerfile in this repo)
 # =============================================================================
 $TrackerFile = Join-Path $ConfigDir "working_trackers.txt"
 if (Test-Path $TrackerFile) { Remove-Item -Path $TrackerFile -Force }
-Write-Log "Starting ping tests via Docker on network '$docker_net'..."
-docker run --rm --network=$docker_net -v "$($ConfigDir):/data" local-trackerping trackerping -l -o /data/working_trackers.txt /data/active_raw.txt
-if ($LASTEXITCODE -ne 0) { Exit-Failure "Docker exited with code $LASTEXITCODE." }
-Write-Log "Docker finished."
+
+Write-Log "Starting ping tests (mode: $PingMode)..."
+$noUdpFlag = ''
+$pingResult = 0
+
+switch ($PingMode) {
+    'docker-vpn' {
+        docker run --rm --network=$docker_net -v "$($ConfigDir):/data" local-trackerping trackerping -l -o /data/working_trackers.txt /data/active_raw.txt
+        $pingResult = $LASTEXITCODE
+    }
+    'socks5' {
+        Write-Log "Using SOCKS5 proxy: $ProxyUrl" "INFO"
+        Write-Log "NOTE: UDP trackers are skipped - SOCKS5 proxies cannot tunnel UDP traffic." "WARN"
+        docker run --rm `
+            -e ALL_PROXY=$ProxyUrl -e all_proxy=$ProxyUrl `
+            -v "$($ConfigDir):/data" `
+            local-trackerping trackerping -l --no-udp -o /data/working_trackers.txt /data/active_raw.txt
+        $pingResult = $LASTEXITCODE
+    }
+    'https-proxy' {
+        Write-Log "Using HTTPS proxy: $ProxyUrl" "INFO"
+        Write-Log "NOTE: UDP trackers are skipped - HTTP/HTTPS proxies cannot tunnel UDP traffic." "WARN"
+        docker run --rm `
+            -e HTTPS_PROXY=$ProxyUrl -e HTTP_PROXY=$ProxyUrl `
+            -e https_proxy=$ProxyUrl -e http_proxy=$ProxyUrl `
+            -v "$($ConfigDir):/data" `
+            local-trackerping trackerping -l --no-udp -o /data/working_trackers.txt /data/active_raw.txt
+        $pingResult = $LASTEXITCODE
+    }
+    'direct' {
+        Write-Log "Pinging directly (no VPN or proxy)." "INFO"
+        docker run --rm `
+            -v "$($ConfigDir):/data" `
+            local-trackerping trackerping -l -o /data/working_trackers.txt /data/active_raw.txt
+        $pingResult = $LASTEXITCODE
+    }
+    default {
+        Write-Log "Unknown pingMode '$PingMode' - falling back to docker-vpn." "WARN"
+        docker run --rm --network=$docker_net -v "$($ConfigDir):/data" local-trackerping trackerping -l -o /data/working_trackers.txt /data/active_raw.txt
+        $pingResult = $LASTEXITCODE
+    }
+}
+
+Write-Log "Docker finished (exit $pingResult)."
+if ($pingResult -ne 0) { Exit-Failure "Ping container exited with code $pingResult." }
 
 # =============================================================================
 # 3. Validate surviving trackers
