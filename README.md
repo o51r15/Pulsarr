@@ -7,10 +7,10 @@ working set into qBittorrent — on a schedule or on demand.
 Rewritten in Python (FastAPI). Container-only deployment. No PowerShell, no
 Windows host dependency, no Docker socket, no DPAPI.
 
-> **Status:** Core rewrite complete (Phases 1–7) and verified, including a live
-> browser walkthrough of the full GUI. Scheduler tab has not yet been manually
-> clicked through — functionally tested via the API, but not yet exercised
-> through the GUI by a human. Packaging/CI polish (Phase 8) is the remaining work.
+> **Status:** Core rewrite complete (Phases 1–8) and verified, including a live
+> browser walkthrough of the full GUI. Packaging is done — see `docker-compose.yml`
+> and `docker-compose.vpn.example.yml` in this repo for ready-to-use deployment
+> examples.
 
 ---
 
@@ -55,49 +55,22 @@ Nothing sensitive is stored in a config file or entered through the GUI.
 
 ## Installation
 
-```yaml
-services:
-  trackarr:
-    image: ghcr.io/o51r15/trackarr:latest
-    ports:
-      - "7374:7374"
-    volumes:
-      - ./data:/app/data
-    environment:
-      - QBT_URL=http://192.168.1.x:8080
-      - QBT_USER=admin
-      - QBT_PASS=yourpassword
-      # Optional:
-      - GITHUB_TOKEN=
-      - PUSHOVER_USER=
-      - PUSHOVER_TOKEN=
-      - WEBHOOK_URL=
+Two ready-to-use compose files are included in this repo:
+
+- **`docker-compose.yml`** — direct connection or SOCKS5/HTTP proxy (no VPN
+  container). Exposes port 7374 directly.
+- **`docker-compose.vpn.example.yml`** — VPN-routed via a provider container
+  like Gluetun. Trackarr shares the VPN container's network namespace; VPN
+  attachment is auto-detected at startup, no manual configuration needed.
+
+Copy whichever matches your setup, fill in `QBT_URL`/`QBT_USER`/`QBT_PASS`
+(and any optional vars you want), then:
+
+```
+docker compose up -d
 ```
 
-To route pings through a VPN, attach the container to the VPN provider's
-network instead of exposing a port directly, e.g. with Gluetun:
-
-```yaml
-services:
-  trackarr:
-    image: ghcr.io/o51r15/trackarr:latest
-    network_mode: "service:gluetun"
-    volumes:
-      - ./data:/app/data
-    environment:
-      - QBT_URL=http://192.168.1.x:8080
-      - QBT_USER=admin
-      - QBT_PASS=yourpassword
-    depends_on:
-      - gluetun
-
-  gluetun:
-    image: qmcgaw/gluetun
-    # ... gluetun config
-```
-
-VPN attachment is auto-detected at container startup — no further
-configuration needed. Open `http://<host>:7374`.
+Open `http://<host>:7374`.
 
 ---
 
@@ -125,7 +98,8 @@ connection mode, tracker URL list, notification toggles) live in
 |---|---|---|
 | VPN | Auto-detected from the container's network gateway | Supported |
 | Direct | Default when no VPN network is detected | Supported |
-| Proxy (SOCKS5/HTTP) | Selected in the GUI when no VPN is detected | **Skipped** — proxies cannot tunnel UDP |
+| Proxy — SOCKS5 | Selected in the GUI when no VPN is detected; uses `aiohttp-socks` | **Skipped** — SOCKS5 cannot tunnel UDP |
+| Proxy — HTTP | Selected in the GUI when no VPN is detected | **Skipped** — HTTP CONNECT proxies cannot tunnel UDP |
 
 ---
 
@@ -142,7 +116,7 @@ trackarr/
 │   │   └── jobs.py        Async job manager, SSE streaming
 │   └── core/
 │       ├── collect.py     Source collection pipeline
-│       ├── ping.py        Async ping engine (UDP, HTTP/HTTPS, WS)
+│       ├── ping.py        Async ping engine (UDP, HTTP/HTTPS, WS, SOCKS5/HTTP proxy)
 │       ├── latency.py     TCP latency measurement
 │       ├── inject.py      qBittorrent API client
 │       ├── sleep.py       Sleep/hibernate state
@@ -153,9 +127,11 @@ trackarr/
 │       ├── notify.py      Pushover + webhook
 │       └── run.py         Full pipeline orchestration
 ├── static/
-│   └── gui.html           Single-file web GUI
-├── data/                  Mounted volume — all persistent state (gitignored)
+│   └── gui.html            Single-file web GUI
+├── data/                   Mounted volume — all persistent state (gitignored)
 ├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.vpn.example.yml
 ├── config.example.json
 └── requirements.txt
 ```
@@ -170,8 +146,8 @@ Interactive docs at `/api/docs` once running.
 
 ## Roadmap
 
-- [ ] docker-compose example files in-repo
-- [ ] SOCKS5 proxy support (`aiohttp` only natively supports HTTP proxies —
-      `aiohttp-socks` needs to be added for SOCKS5 to actually route traffic;
-      currently accepted in config but not functional)
 - [ ] SQLite for tracker history, if JSON file size becomes a problem at scale
+- [ ] Multi-client support (Transmission, rTorrent/ruTorrent, Deluge) — see
+      local dev notes for research findings; requires a client abstraction
+      layer since most other clients lack qBittorrent's global default
+      tracker list feature

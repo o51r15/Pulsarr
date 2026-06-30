@@ -1,0 +1,47 @@
+# Trackarr — VPN-routed mode (example: Gluetun)
+#
+# Trackarr shares Gluetun's network namespace, so its pings exit through
+# whatever VPN provider Gluetun is configured for. VPN attachment is
+# auto-detected at Trackarr's startup — no connection mode needs to be
+# selected, the GUI locks to VPN mode automatically and hides proxy/direct
+# options.
+#
+# Trackarr has no exposed port of its own in this mode — reach the GUI
+# through Gluetun's published port mapping (set below).
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "7374:7374"   # Trackarr GUI, published through Gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER=your_provider
+      - VPN_TYPE=wireguard
+      # - WIREGUARD_PRIVATE_KEY=
+      # - WIREGUARD_ADDRESSES=
+      # See: https://github.com/qdm12/gluetun/wiki for provider-specific config
+
+  trackarr:
+    image: ghcr.io/o51r15/trackarr:latest
+    container_name: trackarr
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    volumes:
+      - ./data:/app/data
+    environment:
+      - QBT_URL=http://192.168.1.x:8080
+      - QBT_USER=admin
+      - QBT_PASS=changeme
+      # Optional:
+      # - GITHUB_TOKEN=
+      # - PUSHOVER_USER=
+      # - PUSHOVER_TOKEN=
+      # - WEBHOOK_URL=

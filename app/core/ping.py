@@ -9,6 +9,12 @@ Tests trackers via:
 When no_udp=True (proxy modes), UDP trackers are skipped entirely rather than
 tested — SOCKS5 and HTTP CONNECT proxies cannot tunnel UDP traffic.
 
+Proxy support:
+  - HTTP/HTTPS proxy URLs (http://host:port) use aiohttp's native per-request
+    `proxy=` kwarg.
+  - SOCKS5 proxy URLs (socks5://host:port) use aiohttp-socks's ProxyConnector
+    as the session's connector — aiohttp has no native SOCKS5 support.
+
 Runs in-process. No subprocess, no Docker, no file-based handoff.
 """
 
@@ -28,6 +34,15 @@ logger = logging.getLogger(__name__)
 
 CONNECT_MAGIC = 0x41727101980
 MAX_CONCURRENCY = 150
+ANNOUNCE_PARAMS = {
+    "info_hash": "%00" * 20,
+    "peer_id": "-TR3000-000000000000",
+    "port": "6881",
+    "uploaded": "0",
+    "downloaded": "0",
+    "left": "0",
+    "compact": "1",
+}
 
 
 @dataclass
@@ -91,25 +106,38 @@ async def _ping_udp(url: str, timeout: float) -> bool:
         return False
 
 
-async def _ping_http(session: aiohttp.ClientSession, url: str, timeout: float) -> bool:
-    base = url.rstrip("/")
+def _announce_url(url: str) -> str:
+    """Maps ws/wss to http/https and ensures the URL ends with /announce."""
+    target = url
+    scheme = urlparse(url).scheme.lower()
+    if scheme in ("ws", "wss"):
+        target = url.replace("wss://", "https://").replace("ws://", "http://")
+    base = target.rstrip("/")
     if not base.endswith("/announce"):
         base += "/announce"
+    return base
+
+
+async def _ping_http(
+    session: aiohttp.ClientSession,
+    url: str,
+    timeout: float,
+    http_proxy: str | None = None,
+) -> bool:
+    """
+    http_proxy: an http:// proxy URL applied per-request via aiohttp's native
+    proxy kwarg. None for direct connections or when the session's connector
+    already routes everything through a SOCKS5 proxy.
+    """
+    base = _announce_url(url)
     try:
         async with session.get(
             base,
-            params={
-                "info_hash": "%00" * 20,
-                "peer_id": "-TR3000-000000000000",
-                "port": "6881",
-                "uploaded": "0",
-                "downloaded": "0",
-                "left": "0",
-                "compact": "1",
-            },
+            params=ANNOUNCE_PARAMS,
             timeout=aiohttp.ClientTimeout(total=timeout),
             allow_redirects=True,
             ssl=False,
+            proxy=http_proxy,
         ) as resp:
             return resp.status < 500
     except Exception:
@@ -122,20 +150,30 @@ async def _ping_one(
     url: str,
     no_udp: bool,
     timeout: float,
+    http_proxy: str | None = None,
 ) -> PingResult:
     async with sem:
         scheme = urlparse(url).scheme.lower()
-        if scheme in ("http", "https"):
-            return PingResult(url, await _ping_http(session, url, timeout))
-        elif scheme in ("ws", "wss"):
-            alt = url.replace("wss://", "https://").replace("ws://", "http://")
-            return PingResult(url, await _ping_http(session, alt, timeout))
+        if scheme in ("http", "https", "ws", "wss"):
+            return PingResult(url, await _ping_http(session, url, timeout, http_proxy))
         elif scheme == "udp":
             if no_udp:
-                return PingResult(url, None)
+                return PingResult(url, None)   # proxy modes can't tunnel UDP
             return PingResult(url, await _ping_udp(url, timeout))
         else:
             return PingResult(url, False)
+
+
+def _build_connector(proxy_url: str | None) -> aiohttp.BaseConnector:
+    """
+    Returns a SOCKS5 ProxyConnector if proxy_url is a socks5:// URL, otherwise
+    a plain TCPConnector (used directly, or with aiohttp's per-request `proxy=`
+    kwarg for HTTP proxies).
+    """
+    if proxy_url and proxy_url.startswith("socks5"):
+        from aiohttp_socks import ProxyConnector
+        return ProxyConnector.from_url(proxy_url, limit=MAX_CONCURRENCY, ssl=False)
+    return aiohttp.TCPConnector(ssl=False, limit=MAX_CONCURRENCY)
 
 
 async def ping_all(
@@ -147,29 +185,24 @@ async def ping_all(
     """
     Pings every tracker URL concurrently (capped at MAX_CONCURRENCY).
 
-    proxy_url: if set, HTTP/HTTPS pings are routed through this proxy
-               (e.g. "socks5://host:port" or "http://host:port").
-               UDP cannot be proxied — callers should pass no_udp=True
-               whenever proxy_url is set.
+    proxy_url:
+      - "socks5://host:port" — routed via aiohttp-socks's ProxyConnector for the
+        whole session. UDP trackers are always skipped (no_udp should be True).
+      - "http://host:port"   — routed via aiohttp's native per-request proxy kwarg.
+        UDP trackers are always skipped (no_udp should be True).
+      - None — direct connection, or VPN-routed at the network layer (the
+        container's own traffic already exits through the VPN network in that
+        case, so no proxy_url is needed).
     """
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
-    connector = aiohttp.TCPConnector(ssl=False, limit=MAX_CONCURRENCY)
+    connector = _build_connector(proxy_url)
+    http_proxy = proxy_url if proxy_url and proxy_url.startswith("http") else None
 
-    session_kwargs = {"connector": connector}
-
-    async with aiohttp.ClientSession(**session_kwargs) as session:
-        if proxy_url:
-            # aiohttp's native proxy support handles HTTP CONNECT proxies directly.
-            # SOCKS5 requires aiohttp-socks; until that dependency is added,
-            # proxy_url is passed through to _ping_http via session-level trust_env
-            # is NOT used here — proxy is applied per-request below.
-            tasks = [
-                _ping_one_with_proxy(session, sem, url, no_udp, timeout, proxy_url)
-                for url in urls
-            ]
-        else:
-            tasks = [_ping_one(session, sem, url, no_udp, timeout) for url in urls]
-
+    async with aiohttp.ClientSession(connector=connector) as session:
+        tasks = [
+            _ping_one(session, sem, url, no_udp, timeout, http_proxy)
+            for url in urls
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     clean: list[PingResult] = []
@@ -179,47 +212,3 @@ async def ping_all(
         else:
             clean.append(r)
     return clean
-
-
-async def _ping_one_with_proxy(
-    session: aiohttp.ClientSession,
-    sem: asyncio.Semaphore,
-    url: str,
-    no_udp: bool,
-    timeout: float,
-    proxy_url: str,
-) -> PingResult:
-    async with sem:
-        scheme = urlparse(url).scheme.lower()
-        if scheme == "udp":
-            # UDP cannot be proxied — always skip when a proxy is configured
-            return PingResult(url, None)
-
-        target = url
-        if scheme in ("ws", "wss"):
-            target = url.replace("wss://", "https://").replace("ws://", "http://")
-
-        base = target.rstrip("/")
-        if not base.endswith("/announce"):
-            base += "/announce"
-
-        try:
-            async with session.get(
-                base,
-                params={
-                    "info_hash": "%00" * 20,
-                    "peer_id": "-TR3000-000000000000",
-                    "port": "6881",
-                    "uploaded": "0",
-                    "downloaded": "0",
-                    "left": "0",
-                    "compact": "1",
-                },
-                timeout=aiohttp.ClientTimeout(total=timeout),
-                allow_redirects=True,
-                ssl=False,
-                proxy=proxy_url if proxy_url.startswith("http") else None,
-            ) as resp:
-                return PingResult(url, resp.status < 500)
-        except Exception:
-            return PingResult(url, False)

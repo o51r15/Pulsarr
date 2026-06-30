@@ -1,0 +1,25 @@
+# Trackarr — direct or proxy mode (no VPN container)
+#
+# No VPN network attached. Trackarr auto-detects this and offers proxy/direct
+# mode selection in the GUI Config tab. Set PROXY_URL there (or in
+# /app/data/config.json) if you want to route pings through a SOCKS5/HTTP
+# proxy; leave connection_mode as "direct" otherwise.
+
+services:
+  trackarr:
+    image: ghcr.io/o51r15/trackarr:latest
+    container_name: trackarr
+    restart: unless-stopped
+    ports:
+      - "7374:7374"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - QBT_URL=http://192.168.1.x:8080
+      - QBT_USER=admin
+      - QBT_PASS=changeme
+      # Optional:
+      # - GITHUB_TOKEN=
+      # - PUSHOVER_USER=
+      # - PUSHOVER_TOKEN=
+      # - WEBHOOK_URL=
