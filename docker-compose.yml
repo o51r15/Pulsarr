@@ -23,3 +23,5 @@ services:
       # - PUSHOVER_USER=
       # - PUSHOVER_TOKEN=
       # - WEBHOOK_URL=
+      # - OLLAMA_URL=http://192.168.1.x:11434   # enables discovery candidate quality scoring
+      # - OLLAMA_MODEL=gemma4:latest             # required alongside OLLAMA_URL, no default assumed

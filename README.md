@@ -8,9 +8,10 @@ Rewritten in Python (FastAPI). Container-only deployment. No PowerShell, no
 Windows host dependency, no Docker socket, no DPAPI.
 
 > **Status:** Core rewrite complete (Phases 1–8) and verified, including a live
-> browser walkthrough of the full GUI. Packaging is done — see `docker-compose.yml`
-> and `docker-compose.vpn.example.yml` in this repo for ready-to-use deployment
-> examples.
+> browser walkthrough of the full GUI. Optional Ollama-powered discovery quality
+> assessment (Phase 10) is also built and verified live. Packaging is done —
+> see `docker-compose.yml` and `docker-compose.vpn.example.yml` in this repo
+> for ready-to-use deployment examples.
 
 ---
 
@@ -25,6 +26,12 @@ Windows host dependency, no Docker socket, no DPAPI.
 - 7-day tracker history with uptime tracking
 - Source discovery engine: well-known aggregators checked every run, GitHub
   search rate-limited to once per 7 days, with a preview/approve/dismiss flow
+- Optional Ollama-powered candidate quality assessment: deterministic metrics
+  (format validity, protocol diversity, overlap, freshness, regex-based red
+  flags) computed in Python, combined with an optional local LLM judgment call
+  for qualitative pattern recognition a regex can't catch. Fully opt-in —
+  unset `OLLAMA_URL` and the Discovery tab behaves exactly as it does without
+  this feature
 - Internal scheduler: daily, weekly, hourly, or interval-based runs — no cron,
   no external scheduler container
 - Pushover and/or webhook notifications on run completion
@@ -85,10 +92,22 @@ Open `http://<host>:7374`.
 | `PUSHOVER_USER` | No | Pushover user key, for completion notifications |
 | `PUSHOVER_TOKEN` | No | Pushover API token |
 | `WEBHOOK_URL` | No | Generic webhook URL, POSTed a JSON payload on run completion |
+| `OLLAMA_URL` | No | Base URL of a reachable Ollama instance, e.g. `http://192.168.1.x:11434`. Enables LLM-judged discovery candidate quality assessment. Leave unset to disable the feature entirely. |
+| `OLLAMA_MODEL` | No | Model name to use, e.g. `gemma4:latest`. Required alongside `OLLAMA_URL` — no default model is assumed, since there's no guarantee any specific model is pulled on a given Ollama instance. Both `OLLAMA_URL` and `OLLAMA_MODEL` must be set for the feature to activate. |
 
 Non-sensitive settings (history retention, latency timeout, proxy URL,
 connection mode, tracker URL list, notification toggles) live in
 `/app/data/config.json` and are editable from the GUI's Config tab.
+
+### A note on Ollama model choice
+
+Tested against `gemma4:latest` (8B) — returns clean, directly-parseable JSON
+with no markdown fences and no reasoning preamble. A single candidate
+assessment takes roughly 40 seconds on modest hardware; this is a synchronous
+call made when a candidate is previewed in the Discovery tab, not during bulk
+discovery sweeps, so it doesn't slow down scheduled runs. Reasoning models
+(e.g. `deepseek-r1`) are also supported — their `<think>...</think>` output is
+stripped before JSON parsing — but expect meaningfully slower response times.
 
 ---
 
@@ -108,27 +127,29 @@ connection mode, tracker URL list, notification toggles) live in
 ```
 trackarr/
 ├── app/
-│   ├── main.py            FastAPI app, startup/shutdown lifecycle
-│   ├── config.py          Env var credentials + AppConfig (non-sensitive settings)
-│   ├── network.py         VPN auto-detection
+│   ├── main.py                 FastAPI app, startup/shutdown lifecycle
+│   ├── config.py               Env var credentials + AppConfig (non-sensitive settings)
+│   ├── network.py              VPN auto-detection
 │   ├── api/
-│   │   ├── router.py      All REST endpoints
-│   │   └── jobs.py        Async job manager, SSE streaming
+│   │   ├── router.py           All REST endpoints
+│   │   └── jobs.py             Async job manager, SSE streaming
 │   └── core/
-│       ├── collect.py     Source collection pipeline
-│       ├── ping.py        Async ping engine (UDP, HTTP/HTTPS, WS, SOCKS5/HTTP proxy)
-│       ├── latency.py     TCP latency measurement
-│       ├── inject.py      qBittorrent API client
-│       ├── sleep.py       Sleep/hibernate state
-│       ├── history.py     7-day tracker run history
-│       ├── sources.py     Tracker source CRUD + discovery state
-│       ├── discovery.py   Source discovery engine
-│       ├── scheduler.py   Internal async scheduler
-│       ├── notify.py      Pushover + webhook
-│       └── run.py         Full pipeline orchestration
+│       ├── collect.py          Source collection pipeline
+│       ├── ping.py             Async ping engine (UDP, HTTP/HTTPS, WS, SOCKS5/HTTP proxy)
+│       ├── latency.py          TCP latency measurement
+│       ├── inject.py           qBittorrent API client
+│       ├── sleep.py            Sleep/hibernate state
+│       ├── history.py          7-day tracker run history
+│       ├── sources.py          Tracker source CRUD + discovery state
+│       ├── discovery.py        Source discovery engine
+│       ├── quality_metrics.py  Deterministic discovery candidate quality metrics
+│       ├── quality_assessment.py  Optional Ollama-powered qualitative judgment
+│       ├── scheduler.py        Internal async scheduler
+│       ├── notify.py           Pushover + webhook
+│       └── run.py              Full pipeline orchestration
 ├── static/
-│   └── gui.html            Single-file web GUI
-├── data/                   Mounted volume — all persistent state (gitignored)
+│   └── gui.html                 Single-file web GUI
+├── data/                        Mounted volume — all persistent state (gitignored)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker-compose.vpn.example.yml
@@ -151,3 +172,6 @@ Interactive docs at `/api/docs` once running.
       local dev notes for research findings; requires a client abstraction
       layer since most other clients lack qBittorrent's global default
       tracker list feature
+- [ ] Loading state in the Discovery tab for Ollama-backed preview calls
+      (~40s response time on tested hardware — currently no UI feedback
+      during the wait)
