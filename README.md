@@ -27,7 +27,7 @@ Supports VPN Docker networks, SOCKS5 proxies, HTTPS proxies, or direct connectio
 **Steps**
 
 1. Clone the repo
-2. Build the ping image (this repo is the source — no external image needed):
+2. Build the ping image from source:
    ```
    docker build -t local-trackerping ./ping
    ```
@@ -47,9 +47,10 @@ Supports VPN Docker networks, SOCKS5 proxies, HTTPS proxies, or direct connectio
 
 ---
 
-### Option 2 — Docker (pre-built image from CI)
+### Option 2 — Docker (pre-built images from CI)
 
-The bridge is published to GitHub Container Registry on every push to master.
+Both images are published to GitHub Container Registry on every push to master.
+No local builds required.
 
 **Requirements**
 - Docker
@@ -57,17 +58,18 @@ The bridge is published to GitHub Container Registry on every push to master.
 
 **Steps**
 
-1. Pull the bridge image:
+1. Pull both images:
    ```
    docker pull ghcr.io/o51r15/trackarr:latest
+   docker pull ghcr.io/o51r15/trackarr-ping:latest
+   docker tag ghcr.io/o51r15/trackarr-ping:latest local-trackerping
    ```
-2. Clone the repo and build the ping image (required regardless of install method):
+2. Create your config:
    ```
-   git clone https://github.com/o51r15/trackarr.git
-   docker build -t local-trackerping ./trackarr/ping
+   curl -o homelab-config.json https://raw.githubusercontent.com/o51r15/trackarr/master/homelab-config.example.json
    ```
-3. Copy `homelab-config.example.json` to `homelab-config.json` and fill in your settings
-4. Run the bridge container:
+   Edit `homelab-config.json` with your qBittorrent URL, credentials, and ping mode settings.
+3. Run the bridge:
    ```
    docker run -d \
      --name trackarr \
@@ -77,7 +79,7 @@ The bridge is published to GitHub Container Registry on every push to master.
      -v /var/run/docker.sock:/var/run/docker.sock \
      ghcr.io/o51r15/trackarr:latest
    ```
-5. Open http://localhost:7374
+4. Open http://localhost:7374
 
 > **Note:** The Docker socket mount (`/var/run/docker.sock`) is required so the bridge
 > can call `docker run local-trackerping` for each ping run.
@@ -86,7 +88,7 @@ The bridge is published to GitHub Container Registry on every push to master.
 
 ## Ping modes
 
-Configured in the GUI under **Config → Ping Mode**, or directly in `homelab-config.json` as `tp.pingMode`.
+Configured in the GUI under **Config → Ping Mode**, or as `tp.pingMode` in `homelab-config.json`.
 
 | Mode | Description | UDP trackers |
 |---|---|---|
@@ -101,14 +103,14 @@ Set `tp.proxyUrl` for SOCKS5/HTTPS proxy modes, e.g. `socks5://192.168.1.x:1080`
 
 ## The ping image
 
-`local-trackerping` is built from `./ping` in this repo. It is a small Alpine + Python image
-that handles the BitTorrent UDP announce protocol, HTTP/HTTPS tracker requests, and WebSocket
-trackers. It is created and destroyed on every TrackerPing run — it is never a running service.
+`local-trackerping` is built from `./ping` in this repo — it is not an external dependency.
+It is a small Alpine + Python image that handles UDP announce, HTTP/HTTPS, and WebSocket trackers.
+It is created and destroyed on every TrackerPing run. It is never a running service.
 
-Build it once after cloning, and rebuild if `./ping` changes:
-```
-docker build -t local-trackerping ./ping
-```
+- **Windows install:** `docker build -t local-trackerping ./ping`
+- **Docker install:** `docker pull ghcr.io/o51r15/trackarr-ping:latest && docker tag ghcr.io/o51r15/trackarr-ping:latest local-trackerping`
+
+Rebuild after any changes to `./ping`.
 
 ---
 
