@@ -4,6 +4,9 @@ data/
 *.log.err
 *.tmp
 
+# Local-only dev notes (not pushed)
+DEVLOG.md
+
 # Python
 __pycache__/
 *.py[cod]
