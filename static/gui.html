@@ -131,8 +131,18 @@
     .sched-card{display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:8px;flex-wrap:wrap;}
     .sched-name{font-weight:600;flex:1;min-width:120px;}
     .sched-meta{font-family:var(--mono);font-size:11px;color:var(--muted);}
+    .log-tab-bar{display:flex;gap:3px;background:rgba(255,255,255,.03);padding:4px;border-radius:5px;}
+    .log-tab-btn{padding:5px 14px;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;border-radius:4px;cursor:pointer;border:none;background:none;color:var(--muted);font-family:var(--sans);white-space:nowrap;}
+    .log-tab-btn.active{background:rgba(0,212,255,.1);color:var(--accent);border:1px solid rgba(0,212,255,.2);}
+    .run-hist-entry{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px;}
+    .run-hist-entry:last-child{border-bottom:none;}
+    .run-hist-ts{font-family:var(--mono);font-size:11px;color:var(--muted);min-width:140px;flex-shrink:0;}
+    .run-hist-up{font-family:var(--mono);font-size:13px;color:var(--success);min-width:60px;}
+    .run-hist-down{font-family:var(--mono);font-size:13px;color:var(--danger);min-width:60px;}
+    .run-hist-lat{font-family:var(--mono);font-size:11px;color:var(--accent);min-width:70px;}
+    .run-hist-bar{flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden;}
+    .run-hist-bar-fill{height:100%;background:linear-gradient(90deg,var(--success),var(--accent));border-radius:2px;}
     @media(max-width:760px){
-        header{padding:12px 16px;gap:10px;}
         main{padding:16px;}
         .stats-row{grid-template-columns:1fr 1fr;}
         .form-grid{grid-template-columns:1fr;}
@@ -181,10 +191,15 @@
         </div>
         <div class="panel">
             <div class="panel-header">
-                <div class="panel-title">Live Log</div>
+                <div class="panel-title">Log</div>
+                <div class="log-tab-bar">
+                    <button class="log-tab-btn active" id="logTabBtnCurrent" onclick="switchLogTab('current')">Current Run</button>
+                    <button class="log-tab-btn" id="logTabBtnHistory" onclick="switchLogTab('history')">Run History</button>
+                </div>
                 <label class="toggle-row" style="padding:0;font-size:11px;color:var(--muted)"><input type="checkbox" id="autoScroll" checked> Auto-scroll</label>
             </div>
-            <div class="panel-body" style="padding:0"><div class="log-wrap" id="logOutput"><div class="log-empty">No run yet. Click Run Now to start.</div></div></div>
+            <div id="logTabCurrent" style="padding:0"><div class="log-wrap" id="logOutput"><div class="log-empty">No run yet. Click Run Now to start.</div></div></div>
+            <div id="logTabHistory" style="display:none;padding:0"><div class="log-wrap" id="runHistoryContent"><div class="log-empty">Loading history...</div></div></div>
         </div>
     </div>
 
@@ -352,6 +367,7 @@
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.dataset.target === pageId));
         document.getElementById('page-' + pageId)?.classList.add('active');
+        if (pageId === 'run')       restoreLastStats();
         if (pageId === 'stats')     loadStats();
         if (pageId === 'sources')   loadSources();
         if (pageId === 'discovery') loadDiscoverySources();
@@ -434,11 +450,32 @@
     function onTrackerpingDone(job) {
         const success = job.status === 'done';
         if (job.summary) {
-            document.getElementById('statFetched').textContent = job.summary.fetched ?? '-';
-            document.getElementById('statActive').textContent  = job.summary.active  ?? '-';
-            document.getElementById('statPassed').textContent  = job.summary.passed  ?? '-';
+            const fetched = job.summary.fetched ?? '-';
+            const active  = job.summary.active  ?? '-';
+            const passed  = job.summary.passed  ?? '-';
+            document.getElementById('statFetched').textContent = fetched;
+            document.getElementById('statActive').textContent  = active;
+            document.getElementById('statPassed').textContent  = passed;
+            // Persist so stats survive tab switches
+            try { sessionStorage.setItem('trackarr_last_stats', JSON.stringify({ fetched, active, passed, success })); } catch {}
         }
         finishRun(success);
+    }
+
+    function restoreLastStats() {
+        try {
+            const saved = sessionStorage.getItem('trackarr_last_stats');
+            if (!saved) return;
+            const s = JSON.parse(saved);
+            document.getElementById('statFetched').textContent = s.fetched;
+            document.getElementById('statActive').textContent  = s.active;
+            document.getElementById('statPassed').textContent  = s.passed;
+            const st = document.getElementById('statStatus');
+            if (s.success !== undefined) {
+                st.textContent = s.success ? 'Success' : 'Failed';
+                st.style.color = s.success ? 'var(--success)' : 'var(--danger)';
+            }
+        } catch {}
     }
 
     function finishRun(success) {
@@ -857,7 +894,92 @@
         clearTimeout(tTimer); tTimer = setTimeout(() => el.className = '', 3000);
     }
 
+    // =========================================================================
+    // LOG TAB SWITCHING
+    // =========================================================================
+    function switchLogTab(tab) {
+        document.getElementById('logTabCurrent').style.display = tab === 'current' ? '' : 'none';
+        document.getElementById('logTabHistory').style.display = tab === 'history' ? '' : 'none';
+        document.getElementById('logTabBtnCurrent').classList.toggle('active', tab === 'current');
+        document.getElementById('logTabBtnHistory').classList.toggle('active', tab === 'history');
+        if (tab === 'history') loadRunHistory();
+    }
+
+    // =========================================================================
+    // RUN HISTORY
+    // Reconstructs per-run summaries from the per-tracker history data by
+    // clustering results with timestamps within 60 seconds of each other.
+    // =========================================================================
+    async function loadRunHistory() {
+        const el = document.getElementById('runHistoryContent');
+        el.innerHTML = '<div class="log-empty">Loading...</div>';
+        try {
+            const res = await fetch(`${BRIDGE}/api/tracker-history`, { cache: 'no-store' });
+            const history = await res.json();
+            const runs = buildRunSummaries(history);
+            if (!runs.length) {
+                el.innerHTML = '<div class="log-empty">No run history yet. Complete a TrackerPing run first.</div>';
+                return;
+            }
+            const maxUp = Math.max(...runs.map(r => r.up));
+            el.innerHTML = runs.map(r => {
+                const d = new Date(r.ts);
+                const ts = d.toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:false });
+                const total = r.up + r.down;
+                const pct = total > 0 ? Math.round((r.up / total) * 100) : 0;
+                const barPct = maxUp > 0 ? Math.round((r.up / maxUp) * 100) : 0;
+                const lat = r.avgLatency != null ? r.avgLatency + 'ms' : '-';
+                return `<div class="run-hist-entry">
+                    <span class="run-hist-ts">${ts}</span>
+                    <span class="run-hist-up">${r.up} up</span>
+                    <span class="run-hist-down">${r.down} down</span>
+                    <span class="run-hist-lat">${lat} avg</span>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);min-width:36px">${pct}%</span>
+                    <div class="run-hist-bar"><div class="run-hist-bar-fill" style="width:${barPct}%"></div></div>
+                </div>`;
+            }).join('');
+        } catch {
+            el.innerHTML = '<div class="log-empty">Could not load run history.</div>';
+        }
+    }
+
+    function buildRunSummaries(historyData) {
+        const trackers = historyData.trackers || {};
+        const allResults = [];
+        for (const [url, data] of Object.entries(trackers)) {
+            for (const run of (data.runs || [])) {
+                const ts = new Date(run.ts).getTime();
+                if (!isNaN(ts)) allResults.push({ ts, status: run.status, latency_ms: run.latency_ms });
+            }
+        }
+        if (!allResults.length) return [];
+        allResults.sort((a, b) => b.ts - a.ts);
+
+        // Cluster results within 60 seconds of each other into a single run
+        const runs = [];
+        let cur = null;
+        for (const r of allResults) {
+            if (!cur || (cur.ts - r.ts) > 60000) {
+                cur = { ts: r.ts, up: 0, down: 0, latencies: [] };
+                runs.push(cur);
+            }
+            if (r.status === 'UP') {
+                cur.up++;
+                if (r.latency_ms != null) cur.latencies.push(r.latency_ms);
+            } else {
+                cur.down++;
+            }
+        }
+        return runs.map(r => ({
+            ts: r.ts,
+            up: r.up,
+            down: r.down,
+            avgLatency: r.latencies.length ? Math.round(r.latencies.reduce((a,b)=>a+b,0)/r.latencies.length) : null,
+        }));
+    }
+
     loadConfig();
+    restoreLastStats();
 </script>
 </body>
 </html>
