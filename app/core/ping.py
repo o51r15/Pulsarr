@@ -10,10 +10,8 @@ IN-PROCESS (vpn_container is None):
 
 CONTAINER (vpn_container is set):
   Pings are delegated to an ephemeral Docker container sharing the VPN
-  container's network namespace. Trackarr writes tracker URLs to a temp
-  input file, spawns the container (using the same image), waits for it
-  to complete, reads the JSON output file, cleans up. All traffic exits
-  through the VPN tunnel automatically, no proxy configuration needed.
+  container's network namespace. Tracker URLs are passed via stdin, results
+  returned as JSON on stdout. No temp files, no host path coordination needed.
 """
 
 from __future__ import annotations
@@ -22,12 +20,10 @@ import asyncio
 import json
 import logging
 import random
-import secrets
 import socket
 import struct
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
@@ -36,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 CONNECT_MAGIC = 0x41727101980
 MAX_CONCURRENCY = 150
-DATA_DIR = Path("/app/data")
 IMAGE_NAME = "ghcr.io/o51r15/trackarr:latest"
 
 ANNOUNCE_PARAMS = {
@@ -209,42 +204,42 @@ async def _ping_all_via_container(
     vpn_container: str,
 ) -> list[PingResult]:
     """
-    Delegates all pinging to an ephemeral container sharing the VPN
-    container's network namespace. Input/output via temp files in /app/data.
+    Delegates pinging to an ephemeral container on the VPN network namespace.
+    URLs passed via stdin, JSON results returned on stdout.
+    No temp files, no volume mounts, no host path coordination needed.
     """
-    job_id = secrets.token_hex(6)
-    input_file  = DATA_DIR / f"ping_{job_id}_input.txt"
-    output_file = DATA_DIR / f"ping_{job_id}_output.json"
-
     try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        input_file.write_text("\n".join(urls), encoding="utf-8")
-
         loop = asyncio.get_event_loop()
-        returncode = await loop.run_in_executor(
-            None,
-            lambda: subprocess.run(
+
+        def _run() -> tuple[int, str, str]:
+            r = subprocess.run(
                 [
-                    "docker", "run", "--rm",
+                    "docker", "run", "--rm", "-i",
                     f"--network=container:{vpn_container}",
-                    "-v", "/app/data:/app/data",
                     IMAGE_NAME,
                     "python3", "-m", "app.ping_worker",
-                    str(input_file), str(output_file),
                 ],
+                input="\n".join(urls),
+                capture_output=True,
+                text=True,
                 timeout=300,
-            ).returncode,
-        )
+            )
+            return r.returncode, r.stdout, r.stderr
+
+        returncode, stdout, stderr = await loop.run_in_executor(None, _run)
 
         if returncode != 0:
-            logger.error("Ping container exited with code %d", returncode)
+            logger.error(
+                "Ping container exited with code %d. stderr: %s",
+                returncode, stderr[:500],
+            )
             return [PingResult(url, False) for url in urls]
 
-        if not output_file.exists():
-            logger.error("Ping container produced no output file")
+        if not stdout.strip():
+            logger.error("Ping container produced no output. stderr: %s", stderr[:500])
             return [PingResult(url, False) for url in urls]
 
-        raw = json.loads(output_file.read_text(encoding="utf-8"))
+        raw = json.loads(stdout)
         return [
             PingResult(url=r["url"], up=r["up"], latency_ms=r.get("latency_ms"))
             for r in raw
@@ -253,9 +248,6 @@ async def _ping_all_via_container(
     except Exception as exc:
         logger.exception("Container ping failed: %s", exc)
         return [PingResult(url, False) for url in urls]
-    finally:
-        input_file.unlink(missing_ok=True)
-        output_file.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

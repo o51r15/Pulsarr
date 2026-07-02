@@ -380,11 +380,11 @@
             if (netInfo.vpn_detected) {
                 pill.className = 'net-pill vpn';
                 pill.textContent = 'VPN';
-                pill.title = `VPN tunnel interface detected: ${netInfo.vpn_interface || 'unknown'}`;
+                pill.title = `Pings routing through container: ${netInfo.vpn_container || 'unknown'}`;
             } else {
                 pill.className = 'net-pill open';
                 pill.textContent = netInfo.mode === 'proxy' ? 'Proxy' : 'Direct';
-                pill.title = 'No VPN tunnel interface detected';
+                pill.title = 'No VPN_CONTAINER configured — direct or proxy mode';
             }
         } catch {}
     }
