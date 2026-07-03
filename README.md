@@ -1,4 +1,4 @@
-﻿# Trackarr
+﻿# Pulsarr
 
 Automatically collects BitTorrent trackers from multiple sources, tests them for liveness, and injects the working ones into qBittorrent — on a schedule or on demand.
 
@@ -10,9 +10,9 @@ Automatically collects BitTorrent trackers from multiple sources, tests them for
 
 ```yaml
 services:
-  trackarr:
-    image: ghcr.io/o51r15/trackarr:latest
-    container_name: trackarr
+  pulsarr:
+    image: ghcr.io/o51r15/pulsarr:latest
+    container_name: pulsarr
     restart: unless-stopped
     ports:
       - "7374:7374"
@@ -43,7 +43,7 @@ Hit **Run Now** on the Execution tab. That is it.
 
 ## VPN Setup (optional)
 
-If you run qBittorrent behind a VPN container like Gluetun, Trackarr can route all tracker pings through it while still reaching qBittorrent directly on your local network. Add one environment variable:
+If you run qBittorrent behind a VPN container like Gluetun, Pulsarr can route all tracker pings through it while still reaching qBittorrent directly on your local network. Add one environment variable:
 
 ```yaml
 environment:
@@ -53,9 +53,9 @@ environment:
   - VPN_CONTAINER=gluetun               # name of your running VPN container
 ```
 
-Trackarr verifies at startup that the VPN is actually routing traffic by comparing the external IP seen inside the VPN container against its own. If they match, runs are aborted until the VPN is confirmed working. Both IPs are shown on the Config tab.
+Pulsarr verifies at startup that the VPN is actually routing traffic by comparing the external IP seen inside the VPN container against its own. If they match, runs are aborted until the VPN is confirmed working. Both IPs are shown on the Config tab.
 
-> The Docker socket mount (`/var/run/docker.sock`) is required — it is how Trackarr spawns the ephemeral ping container on the VPN network.
+> The Docker socket mount (`/var/run/docker.sock`) is required — it is how Pulsarr spawns the ephemeral ping container on the VPN network.
 
 ---
 

@@ -1,6 +1,7 @@
 {
   "history_days": 7,
   "latency_timeout_ms": 3000,
+  "max_trackers": 20,
   "proxy_url": "",
   "connection_mode": "direct",
   "pushover_notify": false,

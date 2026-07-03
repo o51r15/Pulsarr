@@ -95,7 +95,7 @@ async def notify_run_complete(
 
 async def notify_discovery_complete(config, env, candidate_count: int, success: bool, error: str | None) -> None:
     if config.pushover_notify and env.pushover_user and env.pushover_token:
-        title = "Trackarr Discovery"
+        title = "Pulsarr Discovery"
         message = (
             f"{candidate_count} new candidate(s) pending approval." if success
             else f"Discovery FAILED: {error}"

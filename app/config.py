@@ -56,6 +56,7 @@ class AppConfig(BaseModel):
     """
     history_days:        int         = 7
     latency_timeout_ms:  int         = 3000
+    max_trackers:        int         = 20
     proxy_url:           str         = ""
     connection_mode:     str         = "direct"   # "direct" | "proxy" — vpn is auto-detected
     pushover_notify:     bool        = False
@@ -80,6 +81,11 @@ class AppConfig(BaseModel):
     @classmethod
     def clamp_latency(cls, v: int) -> int:
         return max(500, min(v, 30_000))
+
+    @field_validator("max_trackers")
+    @classmethod
+    def clamp_max_trackers(cls, v: int) -> int:
+        return max(1, min(v, 500))
 
 
 def load_app_config() -> AppConfig:

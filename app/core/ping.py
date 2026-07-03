@@ -4,7 +4,7 @@ ping.py — Async tracker connectivity checker
 Two modes:
 
 IN-PROCESS (vpn_container is None):
-  Pings run directly inside Trackarr using asyncio. Supports UDP BitTorrent
+  Pings run directly inside Pulsarr using asyncio. Supports UDP BitTorrent
   protocol, HTTP/HTTPS announce, and WS/WSS. Proxy support via aiohttp-socks
   (SOCKS5) or aiohttp's native HTTP proxy kwarg.
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 CONNECT_MAGIC = 0x41727101980
 MAX_CONCURRENCY = 150
-IMAGE_NAME = "ghcr.io/o51r15/trackarr:latest"
+IMAGE_NAME = "ghcr.io/o51r15/pulsarr:latest"
 
 ANNOUNCE_PARAMS = {
     "info_hash": "%00" * 20,

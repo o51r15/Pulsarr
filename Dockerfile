@@ -1,12 +1,12 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="Trackarr" \
+LABEL org.opencontainers.image.title="Pulsarr" \
       org.opencontainers.image.description="Automated BitTorrent tracker management for qBittorrent" \
-      org.opencontainers.image.source="https://github.com/o51r15/trackarr"
+      org.opencontainers.image.source="https://github.com/o51r15/pulsarr"
 
 WORKDIR /app
 
-# Install Docker CLI so Trackarr can spawn ephemeral ping containers via the
+# Install Docker CLI so Pulsarr can spawn ephemeral ping containers via the
 # mounted Docker socket (/var/run/docker.sock) when VPN_CONTAINER is set.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg && \

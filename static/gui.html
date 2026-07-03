@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trackarr</title>
+<title>Pulsarr</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -154,8 +154,8 @@
 </head>
 <body>
 <header>
-    <div class="logo">TR</div>
-    <h1>Track<span>arr</span></h1>
+    <div class="logo">PS</div>
+    <h1>Pulsar<span>r</span></h1>
     <div id="netPill" class="net-pill open">Detecting...</div>
     <div class="status-pill"><div class="status-dot" id="bridgeDot"></div><span id="bridgeLabel">OFFLINE</span></div>
 </header>
@@ -247,6 +247,7 @@
                 <div class="form-grid">
                     <div class="field"><label>History Retention (days)</label><input type="number" id="cfgHistoryDays" min="1" max="90"></div>
                     <div class="field"><label>Latency Timeout (ms)</label><input type="number" id="cfgLatencyTimeout" min="500" max="30000"></div>
+                    <div class="field"><label>Max Trackers to Import</label><input type="number" id="cfgMaxTrackers" min="1" max="500"><div style="font-size:10px;color:var(--muted);margin-top:4px">Top N trackers by latency sent to qBittorrent. Default: 20.</div></div>
                 </div>
                 <label class="toggle-row"><input type="checkbox" id="cfgPushoverNotify"> Notify via Pushover on run completion</label>
                 <label class="toggle-row"><input type="checkbox" id="cfgWebhookNotify"> Notify via Webhook on run completion</label>
@@ -457,14 +458,14 @@
             document.getElementById('statActive').textContent  = active;
             document.getElementById('statPassed').textContent  = passed;
             // Persist so stats survive tab switches
-            try { sessionStorage.setItem('trackarr_last_stats', JSON.stringify({ fetched, active, passed, success })); } catch {}
+            try { sessionStorage.setItem('pulsarr_last_stats', JSON.stringify({ fetched, active, passed, success })); } catch {}
         }
         finishRun(success);
     }
 
     function restoreLastStats() {
         try {
-            const saved = sessionStorage.getItem('trackarr_last_stats');
+            const saved = sessionStorage.getItem('pulsarr_last_stats');
             if (!saved) return;
             const s = JSON.parse(saved);
             document.getElementById('statFetched').textContent = s.fetched;
@@ -536,6 +537,7 @@
 
             document.getElementById('cfgHistoryDays').value     = currentConfig.history_days;
             document.getElementById('cfgLatencyTimeout').value  = currentConfig.latency_timeout_ms;
+            document.getElementById('cfgMaxTrackers').value     = currentConfig.max_trackers ?? 20;
             document.getElementById('cfgPushoverNotify').checked = currentConfig.pushover_notify;
             document.getElementById('cfgWebhookNotify').checked  = currentConfig.webhook_notify;
             document.getElementById('cfgConnectionMode').value  = currentConfig.connection_mode || 'direct';
@@ -588,6 +590,7 @@
         const payload = {
             history_days:        parseInt(document.getElementById('cfgHistoryDays').value) || 7,
             latency_timeout_ms:  parseInt(document.getElementById('cfgLatencyTimeout').value) || 3000,
+            max_trackers:        parseInt(document.getElementById('cfgMaxTrackers').value) || 20,
             proxy_url:           document.getElementById('cfgProxyUrl').value.trim(),
             connection_mode:     document.getElementById('cfgConnectionMode').value,
             pushover_notify:     document.getElementById('cfgPushoverNotify').checked,

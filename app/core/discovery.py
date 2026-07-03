@@ -26,7 +26,7 @@ from .sources import DiscoveryCandidate, TrackerSources
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_USER_AGENT = "Trackarr-Discovery/2.0"
+DEFAULT_USER_AGENT = "Pulsarr-Discovery/2.0"
 
 LogFn = Callable[[str, str], Awaitable[None]]
 

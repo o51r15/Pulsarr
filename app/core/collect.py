@@ -32,7 +32,7 @@ SCRAPE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-DEFAULT_USER_AGENT = "Trackarr/2.0"
+DEFAULT_USER_AGENT = "Pulsarr/2.0"
 
 
 # ---------------------------------------------------------------------------

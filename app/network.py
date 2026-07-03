@@ -5,7 +5,7 @@ Runs once at container startup. Two modes:
 
 VPN_CONTAINER is set (e.g. VPN_CONTAINER=gluetun):
   Pings will be routed through a temporary container sharing that container's
-  network namespace. At startup we fetch both the host (Trackarr's own) IP
+  network namespace. At startup we fetch both the host (Pulsarr's own) IP
   and the VPN container's IP and store them. The run pipeline checks them
   before pinging and aborts if they match (VPN not protecting traffic).
 

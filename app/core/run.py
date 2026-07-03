@@ -226,14 +226,36 @@ async def run_trackerping(
     )
 
     # ------------------------------------------------------------------
-    # 4-6. qBittorrent inject + verify
+    # 4. Sort by latency and apply max_trackers cap
+    # ------------------------------------------------------------------
+    sorted_trackers = sorted(
+        passed,
+        key=lambda url: latency_map.get(url) if latency_map.get(url) is not None else float("inf"),
+    )
+    top_trackers = sorted_trackers[: config.max_trackers]
+
+    trimmed = len(passed) - len(top_trackers)
+    if trimmed > 0:
+        await log(
+            f"Capped to top {len(top_trackers)} trackers by latency "
+            f"(dropped {trimmed} slowest — max_trackers={config.max_trackers}).",
+            "info",
+        )
+    else:
+        await log(
+            f"All {len(top_trackers)} trackers within max_trackers limit ({config.max_trackers}).",
+            "info",
+        )
+
+    # ------------------------------------------------------------------
+    # 5-6. qBittorrent inject + verify
     # ------------------------------------------------------------------
     try:
         await inject.run_inject_pipeline(
             qbt_url=env.qbt_url,
             qbt_user=env.qbt_user,
             qbt_pass=env.qbt_pass,
-            trackers=list(passed),
+            trackers=top_trackers,
             log=log,
         )
     except (inject.QbtAuthError, inject.QbtConnectionError) as exc:

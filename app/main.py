@@ -40,7 +40,7 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # -- Startup --------------------------------------------------------------
-    logger.info("Trackarr v2 starting up...")
+    logger.info("Pulsarr v2 starting up...")
 
     network_info = await detect(vpn_container=env.vpn_container)
     app.state.network_info   = network_info
@@ -59,11 +59,11 @@ async def lifespan(app: FastAPI):
 
     # -- Shutdown ---------------------------------------------------------------
     scheduler.stop()
-    logger.info("Trackarr shutting down.")
+    logger.info("Pulsarr shutting down.")
 
 
 app = FastAPI(
-    title="Trackarr",
+    title="Pulsarr",
     version="2.0.0",
     description="Automated BitTorrent tracker management for qBittorrent",
     lifespan=lifespan,
