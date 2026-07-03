@@ -13,12 +13,15 @@ IPv6-only trackers and trailing junk characters are filtered/cleaned.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -270,6 +273,105 @@ def clean_trackers(trackers: set[str]) -> tuple[set[str], int]:
             cleaned.add(fixed)
 
     return cleaned, ipv6_count
+
+
+# ---------------------------------------------------------------------------
+# Hostname resolution and IP-level deduplication
+# ---------------------------------------------------------------------------
+
+# Default port assumptions when none is specified in the URL
+_DEFAULT_PORT = {"udp": 6969, "http": 80, "https": 443, "ws": 80, "wss": 443}
+
+# Lower number = preferred when picking one URL from a duplicate group
+_PROTO_PRIORITY = {"udp": 0, "http": 1, "https": 2, "ws": 3, "wss": 4}
+
+
+async def _resolve_ip(host: str, loop, timeout: float = 5.0) -> str | None:
+    """Resolve a hostname to its first IPv4 address. Returns None on any failure."""
+    try:
+        infos = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM),
+            ),
+            timeout=timeout,
+        )
+        return infos[0][4][0] if infos else None
+    except Exception:
+        return None
+
+
+async def resolve_and_deduplicate(
+    urls: set[str],
+    log: LogFn,
+    concurrency: int = 50,
+) -> set[str]:
+    """
+    Resolves each tracker's hostname to an IP address and removes entries
+    where multiple URLs resolve to the same (IP, port) — true duplicates
+    that would ping the same physical server twice.
+
+    Selection when duplicates exist: UDP preferred over HTTP/HTTPS; ties
+    broken by shorter URL.
+
+    URLs that fail DNS resolution are kept and deduplicated only against
+    other URLs with the identical hostname:port, so a resolution failure
+    never causes a tracker to be silently dropped.
+    """
+    await log(f"Resolving hostnames and checking for IP-level duplicates ({len(urls)} trackers)...", "info")
+
+    loop = asyncio.get_event_loop()
+    sem = asyncio.Semaphore(concurrency)
+
+    # Parse scheme/host/port for every URL up front
+    meta: dict[str, tuple[str, str, int]] = {}
+    for url in urls:
+        p = urlparse(url)
+        scheme = p.scheme.lower()
+        host   = p.hostname or ""
+        port   = p.port or _DEFAULT_PORT.get(scheme, 80)
+        meta[url] = (scheme, host, port)
+
+    async def _resolve_one(url: str) -> tuple[str, str | None]:
+        _, host, _ = meta[url]
+        if not host:
+            return url, None
+        async with sem:
+            ip = await _resolve_ip(host, loop)
+        return url, ip
+
+    resolved = await asyncio.gather(*[_resolve_one(u) for u in urls])
+
+    # Group by (ip, port) for resolved URLs, (hostname, port) for unresolved.
+    # Unresolved URLs are only deduped against identical hostname:port strings.
+    groups: dict[tuple, list[str]] = {}
+    for url, ip in resolved:
+        _, host, port = meta[url]
+        key = ("ip", ip, port) if ip else ("host", host, port)
+        groups.setdefault(key, []).append(url)
+
+    kept: set[str] = set()
+    total_dupes = 0
+
+    for group_urls in groups.values():
+        if len(group_urls) == 1:
+            kept.add(group_urls[0])
+            continue
+        # Pick best: lowest protocol priority, then shortest URL as tiebreak
+        best = min(group_urls, key=lambda u: (_PROTO_PRIORITY.get(meta[u][0], 9), len(u)))
+        kept.add(best)
+        total_dupes += len(group_urls) - 1
+
+    if total_dupes > 0:
+        await log(
+            f"Removed {total_dupes} duplicate tracker(s) resolving to the same IP:port. "
+            f"{len(kept)} remain.",
+            "info",
+        )
+    else:
+        await log(f"No IP-level duplicates found. {len(kept)} trackers ready.", "info")
+
+    return kept
 
 
 # ---------------------------------------------------------------------------

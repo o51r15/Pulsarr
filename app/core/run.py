@@ -159,6 +159,11 @@ async def run_trackerping(
         return summary
 
     # ------------------------------------------------------------------
+    # 1.7 Resolve hostnames and deduplicate by (IP, port)
+    # ------------------------------------------------------------------
+    active_trackers = await collect.resolve_and_deduplicate(active_trackers, log)
+
+    # ------------------------------------------------------------------
     # 2. Ping
     # ------------------------------------------------------------------
     no_udp   = connection_mode == "proxy"
