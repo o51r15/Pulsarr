@@ -707,7 +707,12 @@
         const hibernating = new Set(Object.keys(sleepData).filter(u => sleepData[u].state === 'hibernate' && sleepData[u].sleep_until && new Date(sleepData[u].sleep_until) > new Date()));
         const dormant = new Set([...sleeping, ...hibernating]);
 
-        const activeUp  = entries.filter(e => !dormant.has(e.url) &&  e.currentUp).sort((a,b) => b.uptimePct - a.uptimePct);
+        const activeUp  = entries.filter(e => !dormant.has(e.url) &&  e.currentUp).sort((a,b) => {
+            if (a.avgLatency == null && b.avgLatency == null) return 0;
+            if (a.avgLatency == null) return 1;
+            if (b.avgLatency == null) return -1;
+            return a.avgLatency - b.avgLatency;
+        });
         const attention = entries.filter(e => !dormant.has(e.url) && !e.currentUp).sort((a,b) => b.consecFails - a.consecFails);
         const pool = activeUp.length + attention.length;
         const health = pool > 0 ? Math.round((activeUp.length / pool) * 100) : 0;
