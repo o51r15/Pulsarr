@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from ..config import AppConfig, load_app_config, save_app_config, env
 from ..core import discovery as discovery_module
 from ..core import history as history_module
+from ..core import scoring as scoring_module
 from ..core import run as run_module
 from ..core import scheduler as scheduler_module
 from ..core import sleep as sleep_module
@@ -104,6 +105,15 @@ async def post_config(request: Request):
 @router.get("/tracker-history", tags=["trackers"])
 async def get_tracker_history():
     return history_module.load_history()
+
+
+# ---------------------------------------------------------------------------
+# Tracker scores
+# ---------------------------------------------------------------------------
+
+@router.get("/tracker-scores", tags=["trackers"])
+async def get_tracker_scores():
+    return scoring_module.load_scores()
 
 
 # ---------------------------------------------------------------------------

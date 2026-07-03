@@ -116,6 +116,13 @@
     .ts-badge.watching{color:var(--warn);background:rgba(255,202,40,.1);border:1px solid rgba(255,202,40,.25);}
     .ts-badge.failing{color:var(--danger);background:rgba(255,61,87,.1);border:1px solid rgba(255,61,87,.25);}
     .ts-wake-btn{padding:3px 10px;font-size:10px;font-family:var(--mono);background:none;border:1px solid rgba(0,212,255,.3);color:var(--accent);border-radius:3px;cursor:pointer;flex-shrink:0;}
+    .ts-score{font-family:var(--mono);font-size:12px;font-weight:700;min-width:44px;text-align:right;flex-shrink:0;}
+    .ts-score.great{color:var(--success);}
+    .ts-score.ok{color:var(--warn);}
+    .ts-score.poor{color:var(--danger);}
+    .stats-sort-bar{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);margin-bottom:10px;}
+    .stats-sort-btn{padding:4px 12px;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;border-radius:4px;cursor:pointer;border:1px solid var(--border);background:none;color:var(--muted);font-family:var(--sans);}
+    .stats-sort-btn.active{background:rgba(0,212,255,.1);color:var(--accent);border-color:rgba(0,212,255,.2);}
     .job-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:8px;}
     .job-card-header{display:flex;align-items:center;gap:12px;padding:14px 18px;flex-wrap:wrap;}
     .job-card-name{font-size:13px;font-weight:600;color:var(--text);flex:1;}
@@ -675,21 +682,41 @@
         if (j.ok) toast('Manual trackers saved.', 'ok'); else toast(j.error || 'Failed', 'err');
     }
 
+    let statsSortBy = 'score';
+    let lastStatsData = null;
+
     async function loadStats() {
         const el = document.getElementById('statsContent');
         el.innerHTML = '<div class="log-empty">Loading...</div>';
         try {
-            const [histRes, sleepRes] = await Promise.all([
+            const [histRes, sleepRes, scoresRes] = await Promise.all([
                 fetch(`${BRIDGE}/api/tracker-history`, { cache: 'no-store' }),
                 fetch(`${BRIDGE}/api/tracker-sleep`, { cache: 'no-store' }),
+                fetch(`${BRIDGE}/api/tracker-scores`, { cache: 'no-store' }),
             ]);
             const history = await histRes.json();
             const sleep = await sleepRes.json();
-            renderStats(history, sleep, el);
+            const scores = await scoresRes.json();
+            lastStatsData = { history, sleep, scores };
+            renderStats(history, sleep, scores, el);
         } catch { el.innerHTML = '<div class="log-empty">Could not reach bridge.</div>'; }
     }
 
-    function renderStats(history, sleepData, container) {
+    function setSortBy(mode) {
+        statsSortBy = mode;
+        document.querySelectorAll('.stats-sort-btn').forEach(b => b.classList.toggle('active', b.dataset.sort === mode));
+        if (lastStatsData) {
+            const el = document.getElementById('statsContent');
+            renderStats(lastStatsData.history, lastStatsData.sleep, lastStatsData.scores, el);
+        }
+    }
+
+    function renderStats(history, sleepData, scores, container) {
+        // Build score lookup map
+        const scoreMap = {};
+        (scores || []).forEach(s => { scoreMap[s.url] = s; });
+        const aiEnabled = scores && scores.length > 0 && scores[0].ai_enabled;
+
         const trackers = history.trackers || {};
         const entries = Object.entries(trackers).map(([url, t]) => {
             const runs = t.runs || [];
@@ -700,19 +727,25 @@
             const currentUp = runs[0].status === 'UP';
             let consecFails = 0;
             if (!currentUp) { for (const r of runs) { if (r.status !== 'UP') consecFails++; else break; } }
-            return { url, currentUp, uptimePct, avgLatency, consecFails };
+            const score = scoreMap[url] ? scoreMap[url].total : null;
+            return { url, currentUp, uptimePct, avgLatency, consecFails, score };
         }).filter(Boolean);
 
         const sleeping    = new Set(Object.keys(sleepData).filter(u => sleepData[u].state === 'sleep'     && sleepData[u].sleep_until && new Date(sleepData[u].sleep_until) > new Date()));
         const hibernating = new Set(Object.keys(sleepData).filter(u => sleepData[u].state === 'hibernate' && sleepData[u].sleep_until && new Date(sleepData[u].sleep_until) > new Date()));
         const dormant = new Set([...sleeping, ...hibernating]);
 
-        const activeUp  = entries.filter(e => !dormant.has(e.url) &&  e.currentUp).sort((a,b) => {
-            if (a.avgLatency == null && b.avgLatency == null) return 0;
-            if (a.avgLatency == null) return 1;
-            if (b.avgLatency == null) return -1;
-            return a.avgLatency - b.avgLatency;
-        });
+        let activeUp = entries.filter(e => !dormant.has(e.url) && e.currentUp);
+        if (statsSortBy === 'score') {
+            activeUp.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+        } else {
+            activeUp.sort((a, b) => {
+                if (a.avgLatency == null && b.avgLatency == null) return 0;
+                if (a.avgLatency == null) return 1;
+                if (b.avgLatency == null) return -1;
+                return a.avgLatency - b.avgLatency;
+            });
+        }
         const attention = entries.filter(e => !dormant.has(e.url) && !e.currentUp).sort((a,b) => b.consecFails - a.consecFails);
         const pool = activeUp.length + attention.length;
         const health = pool > 0 ? Math.round((activeUp.length / pool) * 100) : 0;
@@ -720,7 +753,18 @@
         const avgLatVals = activeUp.filter(e => e.avgLatency != null);
         const avgLat = avgLatVals.length ? Math.round(avgLatVals.reduce((s,e) => s + e.avgLatency, 0) / avgLatVals.length) : null;
 
-        const aRow = e => `<div class="ts-row"><span class="ts-dot green"></span><span class="ts-url">${escHtml(e.url)}</span><span class="ts-uptime">${e.uptimePct}%</span><span class="ts-latency">${e.avgLatency != null ? e.avgLatency + 'ms' : '-'}</span></div>`;
+        const scoreCls = v => v >= 80 ? 'great' : v >= 60 ? 'ok' : 'poor';
+        const scoreEl = e => e.score != null
+            ? `<span class="ts-score ${scoreCls(e.score)}">${e.score}</span>`
+            : `<span class="ts-score" style="color:var(--muted)">-</span>`;
+
+        const sortBar = `<div class="stats-sort-bar">Sort by:
+            <button class="stats-sort-btn ${statsSortBy==='score'?'active':''}" data-sort="score" onclick="setSortBy('score')">Score</button>
+            <button class="stats-sort-btn ${statsSortBy==='latency'?'active':''}" data-sort="latency" onclick="setSortBy('latency')">Latency</button>
+            ${aiEnabled ? '<span style="margin-left:6px;color:var(--success)">AI</span>' : ''}
+        </div>`;
+
+        const aRow = e => `<div class="ts-row"><span class="ts-dot green"></span><span class="ts-url">${escHtml(e.url)}</span><span class="ts-uptime">${e.uptimePct}%</span><span class="ts-latency">${e.avgLatency != null ? e.avgLatency + 'ms' : '-'}</span>${scoreEl(e)}</div>`;
         const dRow = e => {
             const watching = e.consecFails < 2;
             return `<div class="ts-row"><span class="ts-dot ${watching ? 'yellow' : 'red'}"></span><span class="ts-url">${escHtml(e.url)}</span><span class="ts-badge ${watching ? 'watching' : 'failing'}">${watching ? 'WATCHING' : 'FAILING'}</span><span class="ts-fails">${e.consecFails} fail(s)</span></div>`;
@@ -729,7 +773,7 @@
 
         const section = (id, label, cls, items, rows) => !items.length ? '' : `<div class="ts-section" id="${id}"><div class="ts-section-header ${cls}" onclick="toggleSection('${id}')"><span>${label}</span><span class="ts-count">${items.length}</span><span class="ts-collapse-arrow">v</span></div><div class="ts-list">${rows}</div></div>`;
 
-        container.innerHTML = `
+        container.innerHTML = sortBar + `
             <div class="ts-health-bar">
                 <div class="ts-health-score"><div class="ts-health-num ${healthCls}">${health}%</div><div class="ts-health-lbl">Active Health</div></div>
                 <div class="ts-health-body">

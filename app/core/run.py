@@ -15,7 +15,7 @@ from typing import Awaitable, Callable
 
 import aiohttp
 
-from . import collect, history, inject, latency, ping, sleep
+from . import collect, history, inject, latency, ping, scoring, sleep
 from . import sources as sources_module
 from ..config import AppConfig, Env
 
@@ -211,7 +211,7 @@ async def run_trackerping(
         elif t not in skipped:
             summary.results.append({"url": t, "status": "DOWN", "latency_ms": None})
 
-    history.record_run(summary.results, collection.trackers, config.history_days)
+    updated_history = history.record_run(summary.results, collection.trackers, config.history_days)
 
     # ------------------------------------------------------------------
     # 3.7 Update sleep state
@@ -226,24 +226,40 @@ async def run_trackerping(
     )
 
     # ------------------------------------------------------------------
-    # 4. Sort by latency and apply max_trackers cap
+    # 4. Score trackers and select top N by score
     # ------------------------------------------------------------------
-    sorted_trackers = sorted(
-        passed,
-        key=lambda url: latency_map.get(url) if latency_map.get(url) is not None else float("inf"),
+    await log("Scoring trackers...", "info")
+    scores = await scoring.compute_scores(
+        passed_urls=passed,
+        latency_map=latency_map,
+        history=updated_history,
+        ollama_url=env.ollama_url,
+        ollama_model=env.ollama_model,
     )
-    top_trackers = sorted_trackers[: config.max_trackers]
+    scoring.save_scores(scores)
 
+    ai_note = "(AI + deterministic)" if scores and scores[0].ai_enabled else "(deterministic, AI not configured)"
+    await log(f"Scoring complete {ai_note}. {len(scores)} trackers scored.", "ok")
+
+    top_trackers = [s.url for s in scores[: config.max_trackers]]
     trimmed = len(passed) - len(top_trackers)
     if trimmed > 0:
         await log(
-            f"Capped to top {len(top_trackers)} trackers by latency "
-            f"(dropped {trimmed} slowest — max_trackers={config.max_trackers}).",
+            f"Capped to top {len(top_trackers)} by score "
+            f"(dropped {trimmed} — max_trackers={config.max_trackers}).",
             "info",
         )
     else:
         await log(
             f"All {len(top_trackers)} trackers within max_trackers limit ({config.max_trackers}).",
+            "info",
+        )
+
+    if top_trackers:
+        top_score = scores[0]
+        await log(
+            f"Top tracker: {top_score.url} — score {top_score.total} "
+            f"(latency {top_score.latency_ms}ms, uptime {top_score.uptime_pct}%)",
             "info",
         )
 
