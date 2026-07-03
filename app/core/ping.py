@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 CONNECT_MAGIC = 0x41727101980
 MAX_CONCURRENCY = 150
-IMAGE_NAME = "ghcr.io/o51r15/pulsarr:latest"
+IMAGE_NAME = "ghcr.io/o51r15/trackarr:latest"  # update to pulsarr once GitHub repo is renamed
 
 ANNOUNCE_PARAMS = {
     "info_hash": "%00" * 20,
