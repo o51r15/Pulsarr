@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import socket
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -301,9 +302,60 @@ async def _resolve_ip(host: str, loop, timeout: float = 5.0) -> str | None:
         return None
 
 
+async def _resolve_all_via_container(
+    urls: set[str],
+    vpn_container: str,
+) -> list[tuple[str, str | None]]:
+    """
+    Resolves tracker hostnames inside an ephemeral container sharing the VPN
+    network namespace so DNS queries exit through the tunnel.
+    Returns list of (url, ip_or_none). Falls back to (url, None) on any failure.
+    """
+    from .ping import IMAGE_NAME
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _run() -> tuple[int, str, str]:
+            r = subprocess.run(
+                [
+                    "docker", "run", "--rm", "-i",
+                    f"--network=container:{vpn_container}",
+                    IMAGE_NAME,
+                    "python3", "-m", "app.dns_worker",
+                ],
+                input="\n".join(urls),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            return r.returncode, r.stdout, r.stderr
+
+        returncode, stdout, stderr = await loop.run_in_executor(None, _run)
+
+        if returncode != 0:
+            logger.error(
+                "DNS container exited with code %d. stderr: %s",
+                returncode, stderr[:500],
+            )
+            return [(url, None) for url in urls]
+
+        if not stdout.strip():
+            logger.error("DNS container produced no output. stderr: %s", stderr[:500])
+            return [(url, None) for url in urls]
+
+        raw = json.loads(stdout)
+        return [(item["url"], item.get("ip")) for item in raw]
+
+    except Exception as exc:
+        logger.warning("Container DNS resolution failed: %s", exc)
+        return [(url, None) for url in urls]
+
+
 async def resolve_and_deduplicate(
     urls: set[str],
     log: LogFn,
+    vpn_container: str = "",
     concurrency: int = 50,
 ) -> set[str]:
     """
@@ -340,7 +392,11 @@ async def resolve_and_deduplicate(
             ip = await _resolve_ip(host, loop)
         return url, ip
 
-    resolved = await asyncio.gather(*[_resolve_one(u) for u in urls])
+    if vpn_container:
+        await log(f"Routing DNS through VPN container '{vpn_container}'...", "info")
+        resolved = await _resolve_all_via_container(urls, vpn_container)
+    else:
+        resolved = await asyncio.gather(*[_resolve_one(u) for u in urls])
 
     # Group by (ip, port) for resolved URLs, (hostname, port) for unresolved.
     # Unresolved URLs are only deduped against identical hostname:port strings.

@@ -161,7 +161,9 @@ async def run_trackerping(
     # ------------------------------------------------------------------
     # 1.7 Resolve hostnames and deduplicate by (IP, port)
     # ------------------------------------------------------------------
-    active_trackers = await collect.resolve_and_deduplicate(active_trackers, log)
+    active_trackers = await collect.resolve_and_deduplicate(
+        active_trackers, log, vpn_container=vpn_container
+    )
 
     # ------------------------------------------------------------------
     # 2. Ping
