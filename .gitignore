@@ -6,6 +6,7 @@ data/
 
 # Local-only dev notes (not pushed)
 DEVLOG.md
+pulsarr_dev_log.md
 
 # Python
 __pycache__/
